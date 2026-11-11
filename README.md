@@ -1,10 +1,11 @@
 # StockPilot — Autonomous AI Procurement for Small Retailers
 
-> **PART 1 OF 4: Foundation Architecture & Core Inventory Engine**
+> **PART 1 & 2 OF 4: Foundation Architecture, Channel3 Discovery & Autonomous AI Procurement Agent**
 
 StockPilot is an enterprise-grade autonomous procurement platform designed for small electronics and convenience retailers. It bridges the gap between physical sales shortages and automated restocking: from low-stock detection to supplier comparison via Channel3, approval policy enforcement, and PayPal sandbox payments.
 
-This repository represents **Part 1**, establishing the robust enterprise foundation: Next.js App Router, Tailwind CSS, dark navy enterprise B2B dashboard theme, PostgreSQL + Prisma schema, Zod boundary validations, shared low-stock business logic, AG Grid Community table, and the demo seed dataset.
+- **Part 1 (Done)**: Next.js App Router, Tailwind CSS, dark navy enterprise B2B dashboard theme, PostgreSQL + Prisma schema, Zod boundary validations, shared low-stock business logic, AG Grid Community table, and the demo seed dataset.
+- **Part 2 (Current)**: Autonomous AI procurement agent (Gemini/OpenAI abstraction), Channel3 live product search and canonical offer comparison, pure deterministic policy engine, restock calculation algorithms, live execution timeline polling, and proposal review with `AWAITING_APPROVAL` status.
 
 ---
 
@@ -13,8 +14,11 @@ This repository represents **Part 1**, establishing the robust enterprise founda
 - **Framework**: Next.js 14+ (App Router, Server Components & Route Handlers)
 - **Language**: TypeScript (Strict mode, zero `any`)
 - **Database ORM**: PostgreSQL with Prisma ORM
+- **AI Models**: Google Gemini (`gemini-3.8-flash` via `@google/genai`) with OpenAI fallback (`gpt-4o`)
+- **Product & Supplier Data**: Real-time supplier offers & catalog via Channel3 API (`POST /v1/search`, `GET /v1/products/:id`)
 - **Component Styling**: Tailwind CSS, Radix UI primitives, Lucide Icons
 - **Data Grid**: AG Grid Community (`v32.3+`) with responsive sorting, column filtering, and quick search
+- **Unit Testing**: Vitest (`14/14 tests passing`)
 - **Validation**: Zod (100% server boundary enforcement)
 - **Monetary Storage**: Strict integer minor units (cents) with currency tracking (`USD`)
 
@@ -81,12 +85,29 @@ Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
-Default connection string:
+Configure your environment keys:
 ```env
+# Database
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/stockpilot?schema=public"
+
+# Channel3 (Live Product Search & Supplier Comparison)
+CHANNEL3_API_KEY="c3_live_..."
+
+# AI Engine
+AI_PROVIDER="gemini" # or "openai"
+GEMINI_API_KEY="AIzaSy..."
+OPENAI_API_KEY="sk-..." # optional if AI_PROVIDER="openai"
 ```
 
-### 3. Start PostgreSQL (via Docker Compose)
+### 3. Run Unit Tests (Vitest)
+Verify the pure deterministic policy engine and restock calculations:
+```bash
+npm test
+# Or with coverage/watch:
+npx vitest run
+```
+
+### 4. Start PostgreSQL (via Docker Compose)
 If you don't have a local PostgreSQL instance running:
 ```bash
 docker-compose up -d
@@ -125,6 +146,12 @@ Open **[http://localhost:3000](http://localhost:3000)** in your browser. The app
 | `DELETE`| `/api/inventory/:id`| Remove product from catalog | ID lookup |
 | `GET` | `/api/policy` | Retrieve store procurement policy | Demo user lookup |
 | `PUT` | `/api/policy` | Upsert procurement rules & budgets | Zod `policyUpdateSchema` (converts dollars to cents) |
+| `POST` | `/api/products/search` | Search real supplier products via Channel3 | Zod `{ query: string, limit?: number }` |
+| `GET` | `/api/products/:id` | Retrieve canonical product offers & details | ID lookup |
+| `POST` | `/api/agent/run` | Launch autonomous procurement agent run | Zod `{ prompt: string }` |
+| `GET` | `/api/agent/runs/:id` | Get procurement run status, proposal & logs | Run ID lookup |
+| `GET` | `/api/agent/runs/:id/activities` | Poll live tool call activities for execution timeline | Run ID lookup |
+| `GET` | `/api/dashboard/overview` | Executive stats, low-stock alerts & recent agent activities | None |
 
 ---
 
