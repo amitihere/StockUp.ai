@@ -5,8 +5,8 @@ export default function ApprovalsPage() {
   return (
     <PlaceholderPage
       title="Procurement Approvals"
-      partName="Order Approvals & Review Gates"
-      partNumber="Part 2"
+      partName="Order Approvals & Review Gates (Coming in Part 3)"
+      partNumber="Part 3"
       description="Merchant review gates for purchase orders exceeding automatic authorization thresholds"
       icon={CheckCircle2}
       features={[

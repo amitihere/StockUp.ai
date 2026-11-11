@@ -5,8 +5,8 @@ export default function TransactionsPage() {
   return (
     <PlaceholderPage
       title="Transactions & PayPal Payments"
-      partName="PayPal Orders API & Settlements"
-      partNumber="Part 4"
+      partName="PayPal Orders API & Settlements (Coming in Part 3)"
+      partNumber="Part 3"
       description="Idempotent PayPal sandbox order creation, merchant capture, and payment ledger"
       icon={CreditCard}
       features={[

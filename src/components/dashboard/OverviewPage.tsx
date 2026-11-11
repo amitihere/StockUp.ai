@@ -15,7 +15,7 @@ import {
 import Link from 'next/link'
 import { StatCard } from './StatCard'
 import { LowStockList } from './LowStockList'
-import { RecentActivity } from './RecentActivity'
+import { RecentActivity, ActivitySummary } from './RecentActivity'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, isLowStock, isOutOfStock } from '@/lib/utils'
 import type { Product, OverviewStats } from '@/types'
@@ -23,6 +23,7 @@ import type { Product, OverviewStats } from '@/types'
 export default function OverviewPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [stats, setStats] = useState<OverviewStats | null>(null)
+  const [activities, setActivities] = useState<ActivitySummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -30,28 +31,22 @@ export default function OverviewPage() {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch('/api/inventory', { cache: 'no-store' })
+      const res = await fetch('/api/dashboard/overview', { cache: 'no-store' })
       if (!res.ok) {
         const errorJson = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(errorJson.error || `HTTP Error ${res.status}`)
       }
-      const json = (await res.json()) as { data: Product[] }
-      const items = json.data || []
+      const json = (await res.json()) as {
+        data: {
+          products: Product[]
+          stats: OverviewStats
+          activities: ActivitySummary[]
+        }
+      }
 
-      const totalVal = items.reduce((sum, p) => sum + p.currentStock * p.unitCost, 0)
-      const lowItems = items.filter(
-        (p) => isLowStock(p.currentStock, p.minStock) || isOutOfStock(p.currentStock)
-      )
-
-      setProducts(items)
-      setStats({
-        totalInventoryValue: totalVal,
-        totalProducts: items.length,
-        lowStockCount: lowItems.length,
-        monthlyProcurementSpend: 0,
-        pendingApprovals: 0,
-        completedPurchases: 0,
-      })
+      setProducts(json.data.products || [])
+      setStats(json.data.stats)
+      setActivities(json.data.activities || [])
     } catch (err) {
       console.error('Failed to load overview data:', err)
       setError(err instanceof Error ? err.message : 'Unknown network error')
@@ -178,16 +173,20 @@ export default function OverviewPage() {
           badgeVariant="neutral"
         />
 
-        {/* 5. Pending Approvals (0 for now) */}
+        {/* 5. Pending Approvals */}
         <StatCard
           title="Pending Approvals"
-          value={0}
-          subtitle="Threshold: >$100.00 requires review"
+          value={loading ? '...' : (stats?.pendingApprovals ?? 0)}
+          subtitle="Orders awaiting merchant signoff"
           icon={CheckCircle2}
-          iconColor="text-cyan-400"
-          iconBg="bg-cyan-500/10 border-cyan-500/20"
-          badgeText="Part 2: Approvals"
-          badgeVariant="neutral"
+          iconColor={stats && stats.pendingApprovals > 0 ? 'text-amber-400' : 'text-slate-400'}
+          iconBg={
+            stats && stats.pendingApprovals > 0
+              ? 'bg-amber-500/10 border-amber-500/20'
+              : 'bg-[#13233f] border-[#1c3258]'
+          }
+          badgeText={stats && stats.pendingApprovals > 0 ? 'Awaiting Signoff' : 'None'}
+          badgeVariant={stats && stats.pendingApprovals > 0 ? 'warning' : 'neutral'}
         />
 
         {/* 6. Completed Purchases (0 for now) */}
@@ -206,7 +205,7 @@ export default function OverviewPage() {
       {/* Grid of Low Stock Alerts & Recent Agent Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         <LowStockList products={lowStockProducts} />
-        <RecentActivity />
+        <RecentActivity activities={activities} />
       </div>
     </div>
   )
