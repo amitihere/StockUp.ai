@@ -94,14 +94,37 @@ export async function getOverviewStats(userId: string): Promise<OverviewStats> {
     isLowStock(p.currentStock, p.minStock) || isOutOfStock(p.currentStock)
   ).length
 
+  // Pending approvals count for orders awaiting merchant signoff
+  const pendingApprovals = await prisma.purchaseOrder.count({
+    where: {
+      userId,
+      status: 'AWAITING_APPROVAL',
+    },
+  })
+
   return {
     totalInventoryValue,
     totalProducts: products.length,
     lowStockCount,
-    monthlyProcurementSpend: 0, // Placeholder for Part 2/3
-    pendingApprovals: 0,        // Placeholder for Part 2
-    completedPurchases: 0,      // Placeholder for Part 4
+    monthlyProcurementSpend: 0,
+    pendingApprovals,
+    completedPurchases: 0,
   }
+}
+
+/**
+ * Retrieves the latest agent activities across runs for the user.
+ */
+export async function getRecentActivities(userId: string, limit: number = 6) {
+  return prisma.agentActivity.findMany({
+    where: {
+      procurementRun: {
+        userId,
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  })
 }
 
 /**
