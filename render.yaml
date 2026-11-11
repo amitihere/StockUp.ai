@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: stockpilot
+    env: node
+    plan: starter
+    buildCommand: npm ci && npx prisma generate && (npx prisma migrate deploy || npx prisma db push) && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockpilot-db
+          property: connectionString
+      - key: NEXT_PUBLIC_PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: CHANNEL3_API_KEY
+        sync: false
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: OPENAI_API_KEY
+        sync: false
+
+databases:
+  - name: stockpilot-db
+    databaseName: stockpilot
+    user: stockpilot
+    plan: starter
