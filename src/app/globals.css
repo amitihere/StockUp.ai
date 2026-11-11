@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 50% 6%;
+    --foreground: 210 40% 98%;
+
+    --card: 220 45% 9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 220 45% 9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 220 35% 16%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 220 35% 14%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 220 38% 18%;
+    --input: 220 38% 18%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-blue-600/30 selection:text-blue-200;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    background-color: #050b14;
+    color: #f1f5f9;
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1c3258;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #274577;
+}
+
+/* AG Grid Dark Theme Overrides for Enterprise B2B Navy */
+.ag-theme-alpine-dark,
+.ag-theme-quartz-dark {
+  --ag-background-color: #0a1322 !important;
+  --ag-header-background-color: #0e1a2f !important;
+  --ag-odd-row-background-color: #0a1322 !important;
+  --ag-even-row-background-color: #070e1a !important;
+  --ag-row-hover-color: #13233f !important;
+  --ag-selected-row-background-color: #1c3258 !important;
+  --ag-border-color: #1c3258 !important;
+  --ag-header-foreground-color: #94a3b8 !important;
+  --ag-foreground-color: #f1f5f9 !important;
+  --ag-secondary-foreground-color: #64748b !important;
+  --ag-font-size: 13px !important;
+  --ag-row-height: 48px !important;
+  --ag-header-height: 42px !important;
+  --ag-control-panel-background-color: #0a1322 !important;
+  --ag-subheader-background-color: #0e1a2f !important;
+}
+
+.ag-root-wrapper {
+  border: 1px solid #1c3258 !important;
+  border-radius: 0.5rem !important;
+}
+
