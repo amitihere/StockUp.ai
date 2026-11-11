@@ -10,6 +10,7 @@ export const dynamic = 'force-dynamic'
 const runRequestSchema = z.object({
   prompt: z.string().trim().min(1, 'Prompt is required'),
   budgetDollars: z.coerce.number().min(1).optional(),
+  receiptId: z.string().optional(),
 })
 
 export async function POST(request: NextRequest) {
@@ -28,15 +29,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { prompt, budgetDollars } = validation.data
+    const { prompt, budgetDollars, receiptId } = validation.data
     const ownerBudgetCents = budgetDollars ? dollarsToCents(budgetDollars) : undefined
 
     // 1. Create a ProcurementRun record in RUNNING status
     const run = await prisma.procurementRun.create({
       data: {
         status: 'RUNNING',
-        triggerType: 'MANUAL',
+        triggerType: receiptId ? 'RECEIPT' : 'MANUAL',
         userId: user.id,
+        receiptId: receiptId || null,
       },
     })
 

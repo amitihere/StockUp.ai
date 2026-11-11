@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import {
   Bot,
   Sparkles,
@@ -81,15 +83,29 @@ const EXAMPLE_CHIPS = [
   'Source top-rated USB-C chargers and cables under $300.',
 ]
 
-export default function AiProcurementPage() {
-  const [prompt, setPrompt] = useState('Restock my store under $500. Prioritize quality and value.')
+function AiProcurementContent() {
+  const searchParams = useSearchParams()
+  const initialPrompt = searchParams.get('prompt')
+  const initialReceiptId = searchParams.get('receiptId')
+
+  const [prompt, setPrompt] = useState(initialPrompt || 'Restock my store under $500. Prioritize quality and value.')
   const [budgetDollars, setBudgetDollars] = useState('500')
+  const [receiptId, setReceiptId] = useState<string | null>(initialReceiptId)
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [runData, setRunData] = useState<ProcurementRunData | null>(null)
   const [activities, setActivities] = useState<AgentActivityItem[]>([])
   const [isRunning, setIsRunning] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [expandedActivityIds, setExpandedActivityIds] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    if (initialPrompt) {
+      setPrompt(initialPrompt)
+    }
+    if (initialReceiptId) {
+      setReceiptId(initialReceiptId)
+    }
+  }, [initialPrompt, initialReceiptId])
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -112,6 +128,7 @@ export default function AiProcurementPage() {
         body: JSON.stringify({
           prompt: prompt.trim(),
           budgetDollars: budgetDollars ? Number(budgetDollars) : undefined,
+          receiptId: receiptId || undefined,
         }),
       })
 
@@ -268,6 +285,24 @@ export default function AiProcurementPage() {
         </CardHeader>
 
         <CardContent className="p-5 space-y-4">
+          {receiptId && (
+            <div className="flex items-center justify-between p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-300 text-xs">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                <span>
+                  Triggered by Sales Receipt <strong>#{receiptId.slice(-8)}</strong>
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReceiptId(null)}
+                className="text-slate-400 hover:text-white text-[11px] underline"
+              >
+                Clear link
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-3 space-y-1.5">
               <label className="text-xs font-medium text-slate-300">
@@ -626,19 +661,45 @@ export default function AiProcurementPage() {
             </CardContent>
 
             <CardFooter className="p-5 border-t border-[#1c3258] bg-[#070e1a]/40 flex flex-col gap-2">
-              <Button
-                disabled={true}
-                className="w-full bg-slate-800 text-slate-500 cursor-not-allowed text-xs h-9 justify-center"
-              >
-                Approve & Execute (Coming in Part 3)
-              </Button>
-              <p className="text-[10px] text-center text-slate-500">
-                Merchant approval actions and PayPal sandbox capture will activate in Part 3.
+              {purchaseOrder?.id ? (
+                <Link
+                  href={`/dashboard/approvals?orderId=${purchaseOrder.id}`}
+                  className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs h-9 rounded-lg transition-colors shadow-md shadow-blue-500/20"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Review & Approve in Approvals
+                </Link>
+              ) : (
+                <Link
+                  href="/dashboard/approvals"
+                  className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs h-9 rounded-lg transition-colors shadow-md shadow-blue-500/20"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  View Approvals Queue
+                </Link>
+              )}
+              <p className="text-[10px] text-center text-slate-400">
+                Purchase orders are saved in AWAITING_APPROVAL status for merchant review.
               </p>
             </CardFooter>
           </Card>
         </div>
       </div>
     </div>
+  )
+}
+
+export default function AiProcurementPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-8 text-center text-slate-400 flex items-center justify-center gap-2">
+          <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+          <span>Loading AI Procurement Engine...</span>
+        </div>
+      }
+    >
+      <AiProcurementContent />
+    </Suspense>
   )
 }

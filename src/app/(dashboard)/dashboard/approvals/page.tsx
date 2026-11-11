@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import {
   CheckCircle2,
@@ -20,6 +21,9 @@ import {
   AlertCircle,
   Check,
   Building2,
+  Sparkles,
+  Bot,
+  ArrowRight,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -72,6 +76,7 @@ interface PurchaseOrder {
     status: string
     triggerType: string
     startedAt: string
+    receiptId?: string | null
   }
   isReceived?: boolean
 }
@@ -278,6 +283,29 @@ function ApprovalsContent() {
             {formatCurrency(params.value || 0)}
           </span>
         ),
+      },
+      {
+        headerName: 'Origin',
+        field: 'procurementRun',
+        width: 150,
+        cellRenderer: (params: ICellRendererParams<PurchaseOrder>) => {
+          const run = params.data?.procurementRun
+          if (!run) return <span className="text-slate-500 text-xs">Direct</span>
+          if (run.receiptId) {
+            return (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-300 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded">
+                <Sparkles className="w-3 h-3 text-purple-400" />
+                Receipt #{run.receiptId.slice(-6)}
+              </span>
+            )
+          }
+          return (
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-300 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
+              <Bot className="w-3 h-3 text-blue-400" />
+              Autonomous
+            </span>
+          )
+        },
       },
       {
         headerName: 'Status',
@@ -520,6 +548,29 @@ function ApprovalsContent() {
                 </CardHeader>
 
                 <CardContent className="p-5 space-y-4 text-xs">
+                  {/* Origin Trigger Badge */}
+                  {selectedOrder.procurementRun?.receiptId && (
+                    <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                        <div>
+                          <span className="font-semibold text-purple-200 block text-xs">
+                            Triggered by receipt #{selectedOrder.procurementRun.receiptId.slice(-8)}
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            Generated after receipt sales pushed inventory below minimum threshold
+                          </span>
+                        </div>
+                      </div>
+                      <Link
+                        href={`/dashboard/receipts?id=${selectedOrder.procurementRun.receiptId}`}
+                        className="text-xs text-purple-300 hover:text-white underline ml-2 whitespace-nowrap font-medium"
+                      >
+                        View Receipt
+                      </Link>
+                    </div>
+                  )}
+
                   {/* Line Items Table */}
                   <div>
                     <span className="font-semibold text-slate-300 uppercase tracking-wider text-[10px] block mb-2">

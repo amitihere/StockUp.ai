@@ -41,6 +41,12 @@ export async function GET(
             agentActivities: {
               orderBy: { createdAt: 'asc' },
             },
+            receipt: {
+              select: {
+                id: true,
+                merchant: true,
+              },
+            },
           },
         },
       },

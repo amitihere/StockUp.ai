@@ -17,6 +17,7 @@ import {
   Layers,
   ArrowUpRight,
   FileText,
+  Sparkles,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -50,6 +51,7 @@ interface PaymentRecord {
       id: string
       triggerType: string
       startedAt: string
+      receiptId?: string | null
     }
     items: Array<{
       id: string
@@ -449,6 +451,30 @@ export default function TransactionsPage() {
                       className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-medium"
                     >
                       <span>View Run</span>
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                )}
+
+                {/* Traceability: Triggered by Sales Receipt */}
+                {selectedPayment.purchaseOrder?.procurementRun?.receiptId && (
+                  <div className="p-3 rounded-lg bg-purple-950/30 border border-purple-500/20 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                      <div>
+                        <span className="font-semibold text-slate-200 block text-[11px]">
+                          Triggered by receipt #{selectedPayment.purchaseOrder.procurementRun.receiptId.slice(-8)}
+                        </span>
+                        <span className="text-[10px] text-purple-300/80">
+                          Automated restock order
+                        </span>
+                      </div>
+                    </div>
+                    <Link
+                      href={`/dashboard/receipts?id=${selectedPayment.purchaseOrder.procurementRun.receiptId}`}
+                      className="inline-flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 font-medium"
+                    >
+                      <span>View Receipt</span>
                       <ArrowUpRight className="w-3.5 h-3.5" />
                     </Link>
                   </div>

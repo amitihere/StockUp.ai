@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
             status: true,
             triggerType: true,
             startedAt: true,
+            receiptId: true,
           },
         },
       },
