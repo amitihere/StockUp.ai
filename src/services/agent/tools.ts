@@ -25,7 +25,7 @@ export const getLowStockProductsSchema = z.object({})
 
 export const searchProductsSchema = z.object({
   query: z.string().min(1, 'Query is required'),
-  limit: z.number().int().min(1).max(10).optional().default(5),
+  limit: z.number().int().min(1).max(10).optional().default(3),
 })
 
 export const getProductDetailsSchema = z.object({
@@ -128,7 +128,7 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of supplier products to return (default: 5, max: 10).',
+          description: 'Maximum number of supplier products to return (default: 3, max: 10).',
         },
       },
       required: ['query'],
@@ -339,6 +339,20 @@ export async function executeAgentTool(
       const parsed = searchProductsSchema.parse(args)
       const results = await searchProducts(parsed.query, parsed.limit)
 
+      // Pre-save all results to DB so create_purchase_proposal can reuse
+      // them without an extra Channel3 API call (saves quota on free tier).
+      // We try to find any matching inventory product to link against.
+      const allProducts = await prisma.product.findMany({
+        where: { userId: context.userId },
+        select: { id: true, name: true },
+      })
+      const firstProductId = allProducts[0]?.id
+      if (firstProductId) {
+        await Promise.allSettled(
+          results.map((p) => saveSupplierProduct(firstProductId, p))
+        )
+      }
+
       // Truncate descriptions to preserve context and treat as untrusted
       return {
         query: parsed.query,
@@ -455,8 +469,10 @@ export async function executeAgentTool(
       const drafts: ProposalItemDraft[] = []
 
       for (const item of parsed.items) {
+        // --- Resolve internal inventory product ---
         let prod = allUserProducts.find((p) => p.id === item.productId)
         if (!prod) {
+          // Fuzzy match by name from reasoning field
           prod = allUserProducts.find(
             (p) =>
               p.name.toLowerCase().includes(item.productId.toLowerCase()) ||
@@ -468,38 +484,44 @@ export async function executeAgentTool(
         }
         if (!prod) continue
 
+        // --- Resolve Channel3 product: DB first, then API (saves quota) ---
         let channel3Product
-        try {
-          channel3Product = await getProductDetails(item.channel3ProductId)
-        } catch {
-          // If direct detail lookup fails, check existing supplier products
-          const existing = await prisma.supplierProduct.findFirst({
-            where: { productId: prod.id },
-          })
-          if (existing) {
-            channel3Product = {
-              id: existing.supplierId,
-              title: existing.externalName || prod.name,
-              brand: 'Verified Supplier',
-              imageUrl: '',
-              offers: [],
-              bestOffer: {
-                retailer: 'Verified Supplier',
-                priceCents: existing.price,
-                currency: 'USD',
-                availability: 'IN_STOCK',
-                url: '',
-              },
-              rating: existing.rating,
-              ratingCount: 10,
-              sourceUrl: '',
-            }
+        const existingSupplier = await prisma.supplierProduct.findFirst({
+          where: { supplierId: item.channel3ProductId },
+        })
+
+        if (existingSupplier) {
+          // Reuse previously fetched and saved supplier data — no extra API call
+          channel3Product = {
+            id: item.channel3ProductId,
+            title: existingSupplier.externalName || prod.name,
+            brand: 'Verified Supplier',
+            imageUrl: '',
+            offers: [],
+            bestOffer: {
+              retailer: existingSupplier.supplierId,
+              priceCents: existingSupplier.price,
+              currency: existingSupplier.currency || 'USD',
+              availability: existingSupplier.inStock ? 'InStock' : 'OutOfStock',
+              url: '',
+            },
+            rating: existingSupplier.rating ?? undefined,
+            ratingCount: 10,
+            sourceUrl: '',
+          }
+        } else {
+          // Fallback: fetch from Channel3 API (only when not cached)
+          try {
+            channel3Product = await getProductDetails(item.channel3ProductId)
+          } catch {
+            // Last resort: use internal product cost
+            channel3Product = null
           }
         }
 
         if (!channel3Product) continue
 
-        // Save supplier product to DB
+        // Save supplier product to DB (upsert — idempotent)
         const supplierProduct = await saveSupplierProduct(prod.id, channel3Product)
 
         const unitPriceCents = channel3Product.bestOffer

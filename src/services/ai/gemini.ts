@@ -1,11 +1,4 @@
-import {
-  GoogleGenerativeAI,
-  FunctionDeclaration,
-  Part,
-  Content,
-  FunctionDeclarationSchema,
-  FunctionDeclarationSchemaProperty,
-} from '@google/generative-ai'
+import { GoogleGenAI, Type } from '@google/genai'
 import {
   AIAgentProvider,
   AIToolDefinition,
@@ -14,19 +7,53 @@ import {
   AIToolCall,
 } from './types'
 
+/** Per-API-call timeout in milliseconds (30 s). */
+const CALL_TIMEOUT_MS = 30_000
+
+/** Helper: resolve a promise within a time limit or reject with a timeout error. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Gemini API call timed out after ${ms}ms`)), ms)
+    ),
+  ])
+}
+
+/** Map our generic schema type string to the @google/genai Type enum. */
+function toGeminiType(t: string): string {
+  switch (t.toLowerCase()) {
+    case 'string':
+      return Type.STRING
+    case 'number':
+      return Type.NUMBER
+    case 'integer':
+      return Type.INTEGER
+    case 'boolean':
+      return Type.BOOLEAN
+    case 'array':
+      return Type.ARRAY
+    case 'object':
+      return Type.OBJECT
+    default:
+      return Type.STRING
+  }
+}
+
 export class GeminiProvider implements AIAgentProvider {
   readonly name = 'gemini'
-  private genAI: GoogleGenerativeAI
+  private ai: GoogleGenAI
   private modelName: string
 
-  constructor(apiKey?: string, modelName: string = 'gemini-flash-latest') {
+  constructor(apiKey?: string, modelName: string = 'gemini-3.1-flash-lite') {
     const key = apiKey || process.env.GEMINI_API_KEY
     if (!key) {
       throw new Error(
         'Gemini API key is not configured. Please set GEMINI_API_KEY in your environment.'
       )
     }
-    this.genAI = new GoogleGenerativeAI(key.trim())
+    // @google/genai v2 SDK — handles thought_signature automatically
+    this.ai = new GoogleGenAI({ apiKey: key.trim() })
     this.modelName = modelName
   }
 
@@ -35,93 +62,69 @@ export class GeminiProvider implements AIAgentProvider {
     tools: AIToolDefinition[],
     systemInstruction?: string
   ): Promise<AITurnResult> {
-    // Convert tool definitions to Gemini function declarations
-    const functionDeclarations: FunctionDeclaration[] = tools.map((tool) => {
-      const properties: Record<string, FunctionDeclarationSchemaProperty> = {}
+    // Build function declarations for the new SDK format
+    const functionDeclarations = tools.map((tool) => {
+      const properties: Record<string, object> = {}
       for (const [propName, propDef] of Object.entries(tool.parameters.properties)) {
-        properties[propName] = {
-          type: propDef.type.toUpperCase() as any,
+        const propObj: Record<string, unknown> = {
+          type: toGeminiType(propDef.type),
           description: propDef.description,
-          ...(propDef.enum ? { enum: propDef.enum } : {}),
-          ...(propDef.items
-            ? {
-                items: {
-                  type: propDef.items.type.toUpperCase() as any,
-                  ...(propDef.items.properties
-                    ? { properties: propDef.items.properties as any }
-                    : {}),
-                },
-              }
-            : {}),
         }
-      }
-
-      const schema: FunctionDeclarationSchema = {
-        type: 'OBJECT' as any,
-        properties: properties as any,
-        required: tool.parameters.required || [],
+        if (propDef.enum) propObj.enum = propDef.enum
+        if (propDef.items) {
+          propObj.items = {
+            type: toGeminiType(propDef.items.type),
+            ...(propDef.items.properties ? { properties: propDef.items.properties } : {}),
+          }
+        }
+        properties[propName] = propObj
       }
 
       return {
         name: tool.name,
         description: tool.description,
-        parameters: schema,
+        parameters: {
+          type: Type.OBJECT,
+          properties,
+          required: tool.parameters.required || [],
+        },
       }
     })
 
-    const model = this.genAI.getGenerativeModel({
-      model: this.modelName,
-      systemInstruction: systemInstruction || undefined,
-      tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
-    })
-
-    // Convert AIMessage[] to Gemini Content[]
-    const contents: Content[] = []
+    // Convert AIMessage[] → @google/genai Content[]
+    // The new SDK preserves thoughtSignature opaque blobs automatically when
+    // we echo back the raw `parts` from the previous model turn.
+    type GeminiContent = { role: string; parts: object[] }
+    const contents: GeminiContent[] = []
 
     for (const msg of messages) {
-      if (msg.role === 'system') {
-        // System instructions are passed above
-        continue
-      }
+      if (msg.role === 'system') continue // passed as systemInstruction
 
       if (msg.role === 'user') {
-        contents.push({
-          role: 'user',
-          parts: [{ text: msg.content || '' }],
-        })
+        contents.push({ role: 'user', parts: [{ text: msg.content || '' }] })
       } else if (msg.role === 'assistant') {
-        if (msg.rawParts && (msg.rawParts as Part[]).length > 0) {
-          contents.push({ role: 'model', parts: msg.rawParts as Part[] })
+        // Echo raw parts verbatim (preserves thoughtSignature) when available
+        if (msg.rawParts && (msg.rawParts as object[]).length > 0) {
+          contents.push({ role: 'model', parts: msg.rawParts as object[] })
         } else {
-          const parts: Part[] = []
-          if (msg.content) {
-            parts.push({ text: msg.content })
-          }
-          if (msg.toolCalls && msg.toolCalls.length > 0) {
+          const parts: object[] = []
+          if (msg.content) parts.push({ text: msg.content })
+          if (msg.toolCalls) {
             for (const tc of msg.toolCalls) {
-              parts.push({
-                functionCall: {
-                  name: tc.name,
-                  args: tc.args,
-                },
-              })
+              parts.push({ functionCall: { name: tc.name, args: tc.args } })
             }
           }
-          if (parts.length > 0) {
-            contents.push({ role: 'model', parts })
-          }
+          if (parts.length > 0) contents.push({ role: 'model', parts })
         }
       } else if (msg.role === 'tool') {
-        // Tool result message
+        // Tool results go back as user role with functionResponse parts
         contents.push({
           role: 'user',
           parts: [
             {
               functionResponse: {
                 name: msg.name || 'tool',
-                response: {
-                  result: msg.content ? JSON.parse(msg.content) : {},
-                },
+                response: { result: msg.content ? JSON.parse(msg.content) : {} },
               },
             },
           ],
@@ -129,35 +132,51 @@ export class GeminiProvider implements AIAgentProvider {
       }
     }
 
-    const response = await model.generateContent({ contents })
-    const candidate = response.response.candidates?.[0]
+    // Call the API with a per-request timeout so we never block indefinitely
+    const responsePromise = this.ai.models.generateContent({
+      model: this.modelName,
+      contents: contents as Parameters<typeof this.ai.models.generateContent>[0]['contents'],
+      config: {
+        systemInstruction: systemInstruction || undefined,
+        tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
+      },
+    })
 
+    const response = await withTimeout(responsePromise, CALL_TIMEOUT_MS)
+
+    // Extract text
     let text: string | undefined
     try {
-      text = response.response.text()
+      text = response.text ?? undefined
     } catch {
       text = undefined
     }
 
+    // Extract function calls
     const toolCalls: AIToolCall[] = []
-    const funcCalls = response.response.functionCalls()
+    const candidates = response.candidates ?? []
+    const firstCandidate = candidates[0]
 
-    if (funcCalls && funcCalls.length > 0) {
-      for (let i = 0; i < funcCalls.length; i++) {
-        const fc = funcCalls[i]
-        toolCalls.push({
-          id: `call_${Date.now()}_${i}`,
-          name: fc.name,
-          args: (fc.args as Record<string, unknown>) || {},
-        })
+    if (firstCandidate?.content?.parts) {
+      for (let i = 0; i < firstCandidate.content.parts.length; i++) {
+        const part = firstCandidate.content.parts[i] as Record<string, unknown>
+        if (part.functionCall) {
+          const fc = part.functionCall as { name: string; args?: Record<string, unknown> }
+          toolCalls.push({
+            id: `call_${Date.now()}_${i}`,
+            name: fc.name,
+            args: fc.args || {},
+          })
+        }
       }
     }
 
     return {
       text: text || undefined,
       toolCalls,
-      finishReason: candidate?.finishReason,
-      rawParts: candidate?.content?.parts,
+      finishReason: String(firstCandidate?.finishReason ?? ''),
+      // rawParts preserved verbatim — the new SDK keeps thoughtSignature intact
+      rawParts: firstCandidate?.content?.parts ?? [],
     }
   }
 }
