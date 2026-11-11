@@ -39,16 +39,21 @@ export interface PolicyConfig {
 
 /**
  * Deterministic restock quantity calculation.
- * Default formula:
- * targetStock = 2 * minStock
- * quantity = max(1, ceil(targetStock - currentStock))
- *
- * This function is kept isolated so it can incorporate sales velocity in Part 4.
+ * Formula:
+ * coverTarget = ceil(avgDailySales * 14) (two weeks of cover)
+ * targetStock = max(2 * minStock, coverTarget)
+ * quantity = max(1, targetStock - currentStock)
  */
-export function calculateRestockQuantity(currentStock: number, minStock: number): number {
-  if (minStock <= 0) return 1
-  const targetStock = 2 * minStock
-  const deficit = targetStock - currentStock
+export function calculateRestockQuantity(
+  currentStock: number,
+  minStock: number,
+  avgDailySales?: number
+): number {
+  if (minStock <= 0 && (!avgDailySales || avgDailySales <= 0)) return 1
+  const coverTarget =
+    avgDailySales && avgDailySales > 0 ? Math.ceil(avgDailySales * 14) : 0
+  const targetStock = Math.max(2 * Math.max(0, minStock), coverTarget)
+  const deficit = targetStock - Math.max(0, currentStock)
   return Math.max(1, Math.ceil(deficit))
 }
 

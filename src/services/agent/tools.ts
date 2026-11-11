@@ -39,6 +39,12 @@ export const compareProductsSchema = z.object({
 export const calculateRestockQuantitySchema = z.object({
   currentStock: z.number().int().min(0),
   minStock: z.number().int().min(0),
+  avgDailySales: z.number().min(0).optional(),
+})
+
+export const getSalesVelocitySchema = z.object({
+  productId: z.string().optional(),
+  category: z.string().optional(),
 })
 
 export const createPurchaseProposalSchema = z.object({
@@ -116,6 +122,24 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
     },
   },
   {
+    name: 'get_sales_velocity',
+    description:
+      'Calculates real sales velocity (units sold over the last 30 days from confirmed receipts) per product, average daily sales rate, and dynamically recommended 14-day cover stock targets.',
+    parameters: {
+      type: 'object',
+      properties: {
+        productId: {
+          type: 'string',
+          description: 'Optional internal product ID to query velocity for a specific item.',
+        },
+        category: {
+          type: 'string',
+          description: 'Optional category filter to narrow down velocity results.',
+        },
+      },
+    },
+  },
+  {
     name: 'search_products',
     description:
       'Search real supplier catalog products via Channel3 across thousands of retailers. Returns canonical products with best in-stock offers and ratings.',
@@ -168,7 +192,7 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
   {
     name: 'calculate_restock_quantity',
     description:
-      'Deterministic calculation to determine replenishment quantity: target = 2 * minStock, restock = max(1, target - current). Do not calculate quantities manually; always invoke this tool.',
+      'Deterministic calculation to determine replenishment quantity: target = max(2 * minStock, ceil(avgDailySales * 14)) (two weeks cover), restock = max(1, target - current). Do not calculate quantities manually; always invoke this tool.',
     parameters: {
       type: 'object',
       properties: {
@@ -179,6 +203,10 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
         minStock: {
           type: 'number',
           description: 'Configured minimum stock threshold.',
+        },
+        avgDailySales: {
+          type: 'number',
+          description: 'Optional average daily sales velocity from get_sales_velocity for 14-day dynamic cover.',
         },
       },
       required: ['currentStock', 'minStock'],
@@ -335,6 +363,63 @@ export async function executeAgentTool(
       return { lowStockProducts: lowStock }
     }
 
+    case 'get_sales_velocity': {
+      const parsed = getSalesVelocitySchema.parse(args)
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+
+      const whereProduct: { userId: string; id?: string; category?: string } = {
+        userId: context.userId,
+      }
+      if (parsed.productId) whereProduct.id = parsed.productId
+      if (parsed.category) whereProduct.category = parsed.category
+
+      const products = await prisma.product.findMany({
+        where: whereProduct,
+        include: {
+          stockMovements: {
+            where: {
+              source: 'receipt',
+              change: { lt: 0 },
+              createdAt: { gte: thirtyDaysAgo },
+            },
+          },
+        },
+      })
+
+      const velocityData = products.map((prod) => {
+        const unitsSold30d = prod.stockMovements.reduce(
+          (sum, m) => sum + Math.abs(m.change),
+          0
+        )
+        const avgDailySales = Math.round((unitsSold30d / 30) * 100) / 100
+        const recommendedCover = Math.ceil(avgDailySales * 14)
+        const targetStock = Math.max(2 * prod.minStock, recommendedCover)
+        const recommendedRestock = Math.max(1, targetStock - prod.currentStock)
+
+        return {
+          productId: prod.id,
+          name: prod.name,
+          sku: prod.sku,
+          category: prod.category,
+          currentStock: prod.currentStock,
+          minStock: prod.minStock,
+          unitsSold30d,
+          avgDailySales,
+          recommendedCover14d: recommendedCover,
+          targetStock,
+          recommendedRestock,
+        }
+      })
+
+      velocityData.sort((a, b) => b.unitsSold30d - a.unitsSold30d)
+
+      return {
+        count: velocityData.length,
+        summary: `Computed sales velocity for ${velocityData.length} product(s) over the last 30 days from confirmed receipts.`,
+        products: velocityData,
+      }
+    }
+
     case 'search_products': {
       const parsed = searchProductsSchema.parse(args)
       const results = await searchProducts(parsed.query, parsed.limit)
@@ -444,15 +529,26 @@ export async function executeAgentTool(
 
     case 'calculate_restock_quantity': {
       const parsed = calculateRestockQuantitySchema.parse(args)
-      const restockQuantity = calculateRestockQuantity(parsed.currentStock, parsed.minStock)
-      const targetStock = 2 * parsed.minStock
+      const restockQuantity = calculateRestockQuantity(
+        parsed.currentStock,
+        parsed.minStock,
+        parsed.avgDailySales
+      )
+      const coverTarget =
+        parsed.avgDailySales && parsed.avgDailySales > 0
+          ? Math.ceil(parsed.avgDailySales * 14)
+          : 0
+      const targetStock = Math.max(2 * parsed.minStock, coverTarget)
 
       return {
         currentStock: parsed.currentStock,
         minStock: parsed.minStock,
+        avgDailySales: parsed.avgDailySales || 0,
         targetStock,
         restockQuantity,
-        formula: 'targetStock = 2 * minStock; quantity = max(1, targetStock - currentStock)',
+        formula: parsed.avgDailySales
+          ? 'targetStock = max(2 * minStock, ceil(avgDailySales * 14)); quantity = max(1, targetStock - currentStock)'
+          : 'targetStock = 2 * minStock; quantity = max(1, targetStock - currentStock)',
       }
     }
 

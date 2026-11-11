@@ -34,6 +34,22 @@ describe('calculateRestockQuantity', () => {
     const qty = calculateRestockQuantity(0, 0)
     expect(qty).toBe(1)
   })
+
+  it('incorporates sales velocity: target = max(2 * minStock, ceil(avgDailySales * 14))', () => {
+    // Current stock: 5, Min stock: 10
+    // If avgDailySales = 2.0 -> 14d cover = 28 -> target = max(20, 28) = 28 -> quantity = 28 - 5 = 23
+    const qty1 = calculateRestockQuantity(5, 10, 2.0)
+    expect(qty1).toBe(23)
+
+    // If avgDailySales = 0.5 -> 14d cover = 7 -> target = max(20, 7) = 20 -> quantity = 20 - 5 = 15
+    const qty2 = calculateRestockQuantity(5, 10, 0.5)
+    expect(qty2).toBe(15)
+
+    // Out of stock with high sales velocity: stock 0, min 10, avgDailySales 3.2
+    // 14d cover = ceil(3.2 * 14) = ceil(44.8) = 45 -> target = max(20, 45) = 45 -> quantity = 45
+    const qty3 = calculateRestockQuantity(0, 10, 3.2)
+    expect(qty3).toBe(45)
+  })
 })
 
 describe('validatePurchasePolicy', () => {

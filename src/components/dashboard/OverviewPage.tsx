@@ -11,6 +11,9 @@ import {
   RefreshCw,
   AlertCircle,
   ExternalLink,
+  TrendingUp,
+  Sparkles,
+  ArrowRight,
 } from 'lucide-react'
 import Link from 'next/link'
 import { StatCard } from './StatCard'
@@ -20,10 +23,23 @@ import { Button } from '@/components/ui/button'
 import { formatCurrency, isLowStock, isOutOfStock } from '@/lib/utils'
 import type { Product, OverviewStats } from '@/types'
 
+interface TopSellerItem {
+  productId: string
+  name: string
+  sku: string
+  category: string
+  currentStock: number
+  minStock: number
+  unitsSold30d: number
+  avgDailySales: number
+  recommendedCover14d: number
+}
+
 export default function OverviewPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [stats, setStats] = useState<OverviewStats | null>(null)
   const [activities, setActivities] = useState<ActivitySummary[]>([])
+  const [topSellers, setTopSellers] = useState<TopSellerItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -41,12 +57,14 @@ export default function OverviewPage() {
           products: Product[]
           stats: OverviewStats
           activities: ActivitySummary[]
+          topSellers?: TopSellerItem[]
         }
       }
 
       setProducts(json.data.products || [])
       setStats(json.data.stats)
       setActivities(json.data.activities || [])
+      setTopSellers(json.data.topSellers || [])
     } catch (err) {
       console.error('Failed to load overview data:', err)
       setError(err instanceof Error ? err.message : 'Unknown network error')
@@ -161,16 +179,16 @@ export default function OverviewPage() {
           badgeVariant={stats && stats.lowStockCount > 0 ? 'warning' : 'neutral'}
         />
 
-        {/* 4. Monthly Procurement Spend (0 for now) */}
+        {/* 4. Monthly Procurement Spend (Real numbers from approved/paid orders) */}
         <StatCard
           title="Monthly Spend"
-          value="$0.00"
-          subtitle="Budget cap: $2,000.00/mo"
+          value={loading ? '...' : formatCurrency(stats?.monthlyProcurementSpend ?? 0)}
+          subtitle="Committed & paid orders this month"
           icon={CreditCard}
           iconColor="text-purple-400"
           iconBg="bg-purple-500/10 border-purple-500/20"
-          badgeText="Part 4: PayPal"
-          badgeVariant="neutral"
+          badgeText={stats && stats.monthlyProcurementSpend > 0 ? 'Active' : 'Nominal'}
+          badgeVariant={stats && stats.monthlyProcurementSpend > 0 ? 'success' : 'neutral'}
         />
 
         {/* 5. Pending Approvals */}
@@ -189,17 +207,109 @@ export default function OverviewPage() {
           badgeVariant={stats && stats.pendingApprovals > 0 ? 'warning' : 'neutral'}
         />
 
-        {/* 6. Completed Purchases (0 for now) */}
+        {/* 6. Completed Purchases (Real numbers from PAID orders) */}
         <StatCard
           title="Completed Purchases"
-          value={0}
-          subtitle="Executed purchase orders"
+          value={loading ? '...' : (stats?.completedPurchases ?? 0)}
+          subtitle="Orders paid via PayPal Sandbox"
           icon={Receipt}
-          iconColor="text-slate-400"
-          iconBg="bg-[#13233f] border-[#1c3258]"
-          badgeText="Part 4: Orders"
-          badgeVariant="neutral"
+          iconColor={stats && stats.completedPurchases > 0 ? 'text-emerald-400' : 'text-slate-400'}
+          iconBg={
+            stats && stats.completedPurchases > 0
+              ? 'bg-emerald-500/10 border-emerald-500/20'
+              : 'bg-[#13233f] border-[#1c3258]'
+          }
+          badgeText={stats && stats.completedPurchases > 0 ? 'Settled' : 'None'}
+          badgeVariant={stats && stats.completedPurchases > 0 ? 'success' : 'neutral'}
         />
+      </div>
+
+      {/* Demand from Sales (Top Sellers 30d) Section (Section 5) */}
+      <div className="rounded-xl border border-[#1c3258] bg-[#0a1322] p-5 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#1c3258]">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+              <TrendingUp className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-white tracking-tight">
+                  Demand from Sales (Top Sellers · 30d)
+                </h3>
+                <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" />
+                  Receipt Velocity
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Real customer sales volume calculated from confirmed physical receipts to drive 14-day restock buffers.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/dashboard/receipts"
+            className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors self-start sm:self-auto"
+          >
+            <span>Inspect Sales Receipts</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+
+        {topSellers.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-400">
+            No receipt sales movements recorded in the last 30 days. Upload sales receipts to track dynamic product demand.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 pt-4">
+            {topSellers.map((item, idx) => (
+              <div
+                key={item.productId}
+                className="p-3 rounded-lg bg-[#0e1a2f] border border-[#1c3258] flex flex-col justify-between space-y-2 hover:border-slate-600 transition-colors"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-xs font-semibold text-white block truncate">
+                      {idx + 1}. {item.name}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono block">
+                      SKU: {item.sku} · {item.category}
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 text-[11px] font-bold rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex-shrink-0">
+                    {item.unitsSold30d} sold
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#1c3258]/60 text-[11px]">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">Daily Rate</span>
+                    <span className="font-semibold text-slate-200">
+                      {item.avgDailySales}/day
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">On Hand</span>
+                    <span
+                      className={`font-semibold ${
+                        item.currentStock < item.minStock
+                          ? 'text-amber-400'
+                          : 'text-slate-200'
+                      }`}
+                    >
+                      {item.currentStock} / min {item.minStock}
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-500 block">14d Buffer</span>
+                    <span className="font-bold text-blue-400">
+                      {item.recommendedCover14d} units
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Grid of Low Stock Alerts & Recent Agent Activity */}

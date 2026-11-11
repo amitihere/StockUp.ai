@@ -102,13 +102,41 @@ export async function getOverviewStats(userId: string): Promise<OverviewStats> {
     },
   })
 
+  // Start of current calendar month for procurement spend calculations
+  const startOfMonth = new Date()
+  startOfMonth.setDate(1)
+  startOfMonth.setHours(0, 0, 0, 0)
+
+  // Real monthly procurement spend (APPROVED, PAYMENT_PENDING, PAID orders this month)
+  const monthlyOrders = await prisma.purchaseOrder.findMany({
+    where: {
+      userId,
+      createdAt: { gte: startOfMonth },
+      status: { in: ['APPROVED', 'PAYMENT_PENDING', 'PAID'] },
+    },
+    select: { totalAmount: true },
+  })
+
+  const monthlyProcurementSpend = monthlyOrders.reduce(
+    (sum, o) => sum + o.totalAmount,
+    0
+  )
+
+  // Real completed purchases count (PAID orders)
+  const completedPurchases = await prisma.purchaseOrder.count({
+    where: {
+      userId,
+      status: 'PAID',
+    },
+  })
+
   return {
     totalInventoryValue,
     totalProducts: products.length,
     lowStockCount,
-    monthlyProcurementSpend: 0,
+    monthlyProcurementSpend,
     pendingApprovals,
-    completedPurchases: 0,
+    completedPurchases,
   }
 }
 
@@ -179,5 +207,65 @@ export async function updatePolicy(userId: string, input: PolicyUpdateInput) {
       requireApprovalAbove: dollarsToCents(requireApprovalAboveDollars),
     },
   })
+}
+
+export interface ProductVelocityStat {
+  productId: string
+  name: string
+  sku: string
+  category: string
+  currentStock: number
+  minStock: number
+  unitsSold30d: number
+  avgDailySales: number
+  recommendedCover14d: number
+}
+
+/**
+ * Computes top-selling products over the last 30 days based on confirmed receipts.
+ */
+export async function getSalesVelocityStats(
+  userId: string,
+  limit: number = 5
+): Promise<ProductVelocityStat[]> {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+
+  const products = await prisma.product.findMany({
+    where: { userId },
+    include: {
+      stockMovements: {
+        where: {
+          source: 'receipt',
+          change: { lt: 0 },
+          createdAt: { gte: thirtyDaysAgo },
+        },
+      },
+    },
+  })
+
+  const results: ProductVelocityStat[] = products.map((p) => {
+    const unitsSold30d = p.stockMovements.reduce(
+      (sum, m) => sum + Math.abs(m.change),
+      0
+    )
+    const avgDailySales = Math.round((unitsSold30d / 30) * 100) / 100
+    const recommendedCover14d = Math.ceil(avgDailySales * 14)
+
+    return {
+      productId: p.id,
+      name: p.name,
+      sku: p.sku,
+      category: p.category,
+      currentStock: p.currentStock,
+      minStock: p.minStock,
+      unitsSold30d,
+      avgDailySales,
+      recommendedCover14d,
+    }
+  })
+
+  // Sort descending by units sold
+  results.sort((a, b) => b.unitsSold30d - a.unitsSold30d)
+  return results.slice(0, limit)
 }
 
