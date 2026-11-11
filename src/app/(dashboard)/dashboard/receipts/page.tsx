@@ -722,6 +722,43 @@ function ReceiptsContent() {
                         defaultColDef={{ resizable: true }}
                       />
                     </div>
+
+                    {/* Discount & Bulk Order Insight Card (Optional Item 7) */}
+                    {lines.some((l) => (l.discount || 0) > 0) && (
+                      <div className="mt-3 p-3.5 rounded-lg bg-purple-950/20 border border-purple-500/20 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-300">
+                            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                            <span>Bulk Sale & Promotional Savings Analysis</span>
+                          </div>
+                          <span className="text-[11px] font-bold text-emerald-400">
+                            Customer Savings: -{formatCurrency(lines.reduce((s, l) => s + (l.discount || 0), 0))}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                          {lines
+                            .filter((l) => (l.discount || 0) > 0)
+                            .map((l) => (
+                              <div
+                                key={l.id}
+                                className="p-2 rounded bg-[#070e1a] border border-[#1c3258] flex justify-between items-center"
+                              >
+                                <div className="min-w-0 pr-2">
+                                  <span className="font-medium text-slate-200 block truncate">
+                                    {l.rawName}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    Qty: {l.quantity} × {formatCurrency(l.unitPrice)}
+                                  </span>
+                                </div>
+                                <span className="font-semibold text-red-400 flex-shrink-0">
+                                  -{formatCurrency(l.discount)}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardContent>
