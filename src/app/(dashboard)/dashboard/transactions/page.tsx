@@ -201,7 +201,7 @@ export default function TransactionsPage() {
         width: 140,
         valueFormatter: (params) => {
           if (!params.value) return ''
-          return new Date(params.value).toLocaleDateString(undefined, {
+          return new Date(params.value).toLocaleString(undefined, {
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
