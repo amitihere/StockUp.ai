@@ -1,0 +1,201 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String              @id @default(cuid())
+  name              String
+  email             String              @unique
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  products          Product[]
+  procurementPolicy ProcurementPolicy?
+  procurementRuns   ProcurementRun[]
+  purchaseOrders    PurchaseOrder[]
+  approvals         Approval[]
+  receipts          Receipt[]
+}
+
+model Product {
+  id                 String              @id @default(cuid())
+  name               String
+  sku                String              @unique
+  category           String
+  currentStock       Int
+  minStock           Int
+  unitCost           Int                 // stored in integer minor units (cents)
+  currency           String              @default("USD")
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  userId             String
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchaseOrderItems PurchaseOrderItem[]
+  supplierProducts   SupplierProduct[]
+  receiptLineItems   ReceiptLineItem[]
+  stockMovements     StockMovement[]
+}
+
+model ProcurementPolicy {
+  id                      String   @id @default(cuid())
+  monthlyBudget           Int      // stored in cents
+  maxAutomaticPurchase    Int      // stored in cents
+  requireApprovalAbove    Int      // stored in cents
+  minimumProductRating    Float    // e.g. 4.0
+  allowAutomaticPurchases Boolean  @default(false)
+  currency                String   @default("USD")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  userId                  String   @unique
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ProcurementRun {
+  id              String          @id @default(cuid())
+  status          String          // "RUNNING", "COMPLETED", "FAILED"
+  triggerType     String          @default("MANUAL") // "MANUAL", "LOW_STOCK", "RECEIPT"
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchaseOrders  PurchaseOrder[]
+  agentActivities AgentActivity[]
+}
+
+model SupplierProduct {
+  id           String   @id @default(cuid())
+  supplierId   String
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  externalName String?
+  price        Int      // stored in cents
+  currency     String   @default("USD")
+  rating       Float
+  leadTimeDays Int      @default(3)
+  inStock      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model PurchaseOrder {
+  id               String              @id @default(cuid())
+  status           PurchaseOrderStatus @default(DRAFT)
+  totalAmount      Int                 // stored in cents
+  currency         String              @default("USD")
+  supplierId       String
+  notes            String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  userId           String
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  procurementRunId String?
+  procurementRun   ProcurementRun?     @relation(fields: [procurementRunId], references: [id], onDelete: SetNull)
+  items            PurchaseOrderItem[]
+  approvals        Approval[]
+  payments         Payment[]
+  receipts         Receipt[]
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity        Int
+  unitPrice       Int           // stored in cents
+  currency        String        @default("USD")
+  createdAt       DateTime      @default(now())
+}
+
+model Approval {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status          String        // "PENDING", "APPROVED", "REJECTED"
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  paypalOrderId   String?
+  captureId       String?
+  status          String        // "PENDING", "COMPLETED", "FAILED"
+  amount          Int           // stored in cents
+  currency        String        @default("USD")
+  idempotencyKey  String        @unique
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model AgentActivity {
+  id             String         @id @default(cuid())
+  runId          String
+  procurementRun ProcurementRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  type           String         // "TOOL_CALL", "DECISION", "LOG"
+  toolName       String?
+  inputData      Json?
+  outputData     Json?
+  createdAt      DateTime       @default(now())
+}
+
+model Receipt {
+  id              String            @id @default(cuid())
+  imageUrl        String?
+  fileHash        String?
+  status          String            @default("PENDING") // "PENDING", "CONFIRMED", "PROCESSED"
+  total           Int               @default(0)         // stored in cents
+  currency        String            @default("USD")
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchaseOrderId String?
+  purchaseOrder   PurchaseOrder?    @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  lineItems       ReceiptLineItem[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+model ReceiptLineItem {
+  id               String   @id @default(cuid())
+  receiptId        String
+  receipt          Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  rawName          String
+  matchedProductId String?
+  matchedProduct   Product? @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)
+  quantity         Int
+  unitPrice        Int      // stored in cents
+  discount         Int      @default(0) // stored in cents
+  currency         String   @default("USD")
+  createdAt        DateTime @default(now())
+}
+
+model StockMovement {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  change      Int      // e.g. -2 for sale, +10 for restock
+  source      String   // "receipt", "manual", "order"
+  referenceId String?  // receiptId or purchaseOrderId
+  createdAt   DateTime @default(now())
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  AWAITING_APPROVAL
+  APPROVED
+  PAYMENT_PENDING
+  PAID
+  FAILED
+  CANCELLED
+}
+
