@@ -34,3 +34,4 @@ export function validateReceiptTotals(data: ReceiptExtractionData): {
   const totalsMatch = discrepancyCents === 0
   return { totalsMatch, lineSumCents, discrepancyCents }
 }
+

@@ -139,3 +139,4 @@ describe('Receipt Product Matching Algorithm', () => {
     expect(match.matchedProductId).toBeNull()
   })
 })
+

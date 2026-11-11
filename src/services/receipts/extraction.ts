@@ -113,3 +113,4 @@ export async function extractReceiptFromImage(
     rawExtractedJson: parsedJson as Record<string, unknown>,
   }
 }
+

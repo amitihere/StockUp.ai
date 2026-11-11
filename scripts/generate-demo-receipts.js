@@ -313,3 +313,4 @@ for (const r of receipts) {
 }
 
 console.log('All receipts generated successfully!')
+

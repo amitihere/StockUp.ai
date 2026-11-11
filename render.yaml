@@ -37,3 +37,4 @@ databases:
     databaseName: stockpilot
     user: stockpilot
     plan: starter
+

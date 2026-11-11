@@ -94,3 +94,4 @@ Expected response:
 - **Zero Client-Side Amounts**: All order amounts and PayPal payloads are generated strictly on the server from validated database entities.
 - **Idempotency Keys**: PayPal `PayPal-Request-Id` headers prevent duplicate charges on network retries.
 - **Audit Trails**: Every approval, rejection, and payment capture is recorded immutably in PostgreSQL `AuditLog`.
+

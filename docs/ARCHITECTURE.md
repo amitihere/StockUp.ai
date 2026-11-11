@@ -88,3 +88,4 @@ Every state transition and financial transaction generates an immutable `AuditLo
 - **Actions Logged**: `APPROVE`, `REJECT`, `CANCEL`, `CREATE_PAYPAL_ORDER`, `CAPTURE_PAYPAL_ORDER`, `VERIFY_PAYMENT`, `PAYMENT_FAILED`, `MARK_RECEIVED`, `CONFIRM_RECEIPT`.
 - **Audit Metadata**: Timestamp, user ID, entity ID, previous/new status, idempotency keys, and raw PayPal verification payloads.
 - **Merchant Transparency**: Exposed directly in the Transactions ledger UI for auditability and compliance.
+
