@@ -58,6 +58,8 @@ model ProcurementRun {
   id              String          @id @default(cuid())
   status          String          // "RUNNING", "COMPLETED", "FAILED"
   triggerType     String          @default("MANUAL") // "MANUAL", "LOW_STOCK", "RECEIPT"
+  receiptId       String?
+  receipt         Receipt?        @relation(fields: [receiptId], references: [id], onDelete: SetNull)
   startedAt       DateTime        @default(now())
   completedAt     DateTime?
   userId          String
@@ -134,8 +136,19 @@ model Payment {
   amount          Int           // stored in cents
   currency        String        @default("USD")
   idempotencyKey  String        @unique
+  rawResponse     Json?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String   // "APPROVE", "REJECT", "CREATE_PAYPAL_ORDER", "CAPTURE_PAYPAL_ORDER", "VERIFY_PAYMENT", "PAYMENT_FAILED", "CANCEL", "MARK_RECEIVED"
+  entityType String   // "PURCHASE_ORDER", "PAYMENT"
+  entityId   String
+  userId     String?
+  details    Json?
+  createdAt  DateTime @default(now())
 }
 
 model AgentActivity {
@@ -151,18 +164,26 @@ model AgentActivity {
 
 model Receipt {
   id              String            @id @default(cuid())
+  imageData       Bytes?
+  mimeType        String?           @default("image/png")
   imageUrl        String?
   fileHash        String?
-  status          String            @default("PENDING") // "PENDING", "CONFIRMED", "PROCESSED"
-  total           Int               @default(0)         // stored in cents
+  status          String            @default("UPLOADED") // "UPLOADED", "EXTRACTED", "CONFIRMED", "REJECTED"
+  merchant        String?
+  date            String?
+  totalCents      Int               @default(0)         // stored in cents
   currency        String            @default("USD")
+  extractedJson   Json?
   userId          String
   user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   purchaseOrderId String?
   purchaseOrder   PurchaseOrder?    @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
   lineItems       ReceiptLineItem[]
+  procurementRuns ProcurementRun[]
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+
+  @@index([userId, fileHash])
 }
 
 model ReceiptLineItem {
@@ -170,11 +191,14 @@ model ReceiptLineItem {
   receiptId        String
   receipt          Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
   rawName          String
-  matchedProductId String?
-  matchedProduct   Product? @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)
+  sku              String?
   quantity         Int
   unitPrice        Int      // stored in cents
   discount         Int      @default(0) // stored in cents
+  lineTotal        Int      @default(0) // stored in cents
+  confidence       Float?   // matching confidence score 0.0 - 1.0
+  matchedProductId String?
+  matchedProduct   Product? @relation(fields: [matchedProductId], references: [id], onDelete: SetNull)
   currency         String   @default("USD")
   createdAt        DateTime @default(now())
 }

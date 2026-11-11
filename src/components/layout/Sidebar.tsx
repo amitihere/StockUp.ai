@@ -49,22 +49,16 @@ const navItems: NavItem[] = [
     name: 'Approvals',
     href: '/dashboard/approvals',
     icon: CheckCircle2,
-    badge: 'Part 3',
-    isPlaceholder: true,
   },
   {
     name: 'Transactions',
     href: '/dashboard/transactions',
     icon: CreditCard,
-    badge: 'Part 3',
-    isPlaceholder: true,
   },
   {
     name: 'Receipts',
     href: '/dashboard/receipts',
     icon: ReceiptText,
-    badge: 'Part 4',
-    isPlaceholder: true,
   },
   {
     name: 'Settings',

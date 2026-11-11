@@ -47,5 +47,27 @@ export interface AIAgentProvider {
     tools: AIToolDefinition[],
     systemInstruction?: string
   ): Promise<AITurnResult>
+  extractReceiptVision?(imageBuffer: Buffer, mimeType: string): Promise<string>
 }
+
+export interface ReceiptExtractionLine {
+  description: string
+  sku?: string
+  quantity: number
+  unitPriceCents: number
+  discountCents: number
+  lineTotalCents: number
+}
+
+export interface ReceiptExtractionResult {
+  merchant: string
+  date: string
+  currency: string
+  lines: ReceiptExtractionLine[]
+  totalCents: number
+  totalsMatch: boolean
+  lineSumCents: number
+  rawText?: string
+}
+
 
