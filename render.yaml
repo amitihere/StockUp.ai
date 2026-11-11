@@ -2,7 +2,7 @@ services:
   - type: web
     name: stockpilot
     env: node
-    plan: starter
+    plan: free
     buildCommand: npm ci && npx prisma generate && (npx prisma migrate deploy || npx prisma db push) && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
@@ -36,5 +36,5 @@ databases:
   - name: stockpilot-db
     databaseName: stockpilot
     user: stockpilot
-    plan: starter
+    plan: free
 

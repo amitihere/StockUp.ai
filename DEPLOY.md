@@ -3,6 +3,8 @@
 This guide walks through deploying **StockPilot** to [Render](https://render.com) using the included Blueprint (`render.yaml`).
 
 > [!NOTE]
+> **100% Free Tier (No Credit Card Required)**: `render.yaml` is configured with `plan: free` for both the Web Service and PostgreSQL database. Render does not require a payment method or credit card for free tier deployments.
+>
 > **PayPal Sandbox Mode**: StockPilot operates exclusively with PayPal **Sandbox** credentials for hackathon evaluation and judging. Live commercial PayPal accounts should **never** be used for hackathon testing.
 
 ---
