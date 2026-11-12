@@ -105,16 +105,36 @@ export async function POST(request: NextRequest) {
       0
     )
 
-    const drafts: ProposalItemDraft[] = order.items.map((item) => ({
-      productId: item.productId,
-      productName: item.product.name,
-      currentStock: item.product.currentStock,
-      minStock: item.product.minStock,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      totalPrice: item.unitPrice * item.quantity,
-      reasoning: 'Re-validated before payment initialization',
-    }))
+    const productIds = order.items.map((item) => item.productId)
+    const supplierProducts = await prisma.supplierProduct.findMany({
+      where: {
+        productId: { in: productIds },
+      },
+    })
+
+    const drafts: ProposalItemDraft[] = order.items.map((item) => {
+      const sp =
+        supplierProducts.find(
+          (s) =>
+            s.productId === item.productId &&
+            (s.supplierId === order.supplierId || s.externalName === order.supplierId)
+        ) || supplierProducts.find((s) => s.productId === item.productId)
+
+      return {
+        productId: item.productId,
+        productName: item.product.name,
+        currentStock: item.product.currentStock,
+        minStock: item.product.minStock,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.unitPrice * item.quantity,
+        reasoning: 'Re-validated before payment initialization',
+        rating: sp?.rating,
+        retailer: sp?.externalName || order.supplierId,
+        channel3ProductId: sp?.supplierId,
+        supplierProductId: sp?.id,
+      }
+    })
 
     const evaluation = validatePurchasePolicy(drafts, policy, thisMonthCommittedCents)
     if (!evaluation.passed) {
