@@ -46,7 +46,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Purchase order not found' }, { status: 404 })
     }
 
-    // 2. Strict precondition: Order must be APPROVED
+    // 2. Strict precondition: Order must be APPROVED (or PAYMENT_PENDING with an existing PayPal order to retry)
+    if (order.status === 'PAYMENT_PENDING') {
+      const existingPayment = await prisma.payment.findFirst({
+        where: {
+          purchaseOrderId: order.id,
+          status: 'CREATED',
+          paypalOrderId: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+
+      if (existingPayment?.paypalOrderId) {
+        return NextResponse.json({
+          data: {
+            purchaseOrderId: order.id,
+            paypalOrderId: existingPayment.paypalOrderId,
+            status: 'PAYMENT_PENDING',
+          },
+        })
+      }
+
+      return NextResponse.json(
+        {
+          error: 'Order is in PAYMENT_PENDING status without an active PayPal order. Please cancel and recreate the order.',
+        },
+        { status: 400 }
+      )
+    }
+
     if (order.status !== 'APPROVED') {
       return NextResponse.json(
         {

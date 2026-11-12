@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   Clock,
   ShieldCheck,
-  CreditCard,
   Package,
   Layers,
   RefreshCw,
@@ -648,7 +647,13 @@ function ApprovalsContent() {
                   </div>
 
                   {/* Actions Section based on status */}
-                  <div className="pt-2">
+                  <div className="pt-2 space-y-3">
+                    {actionMessage && actionMessage.type === 'error' && (
+                      <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-[11px] flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                        <span>{actionMessage.text}</span>
+                      </div>
+                    )}
                     {/* Status: AWAITING_APPROVAL */}
                     {selectedOrder.status === 'AWAITING_APPROVAL' && (
                       <div className="space-y-2">
@@ -687,6 +692,7 @@ function ApprovalsContent() {
                         {paypalClientId ? (
                           <div className="min-h-[120px] bg-white/5 p-2 rounded-lg border border-[#1c3258]">
                             <PayPalButtons
+                              key={selectedOrder.id}
                               style={{
                                 layout: 'vertical',
                                 color: 'gold',
@@ -702,7 +708,11 @@ function ApprovalsContent() {
                                 })
                                 const json = await res.json()
                                 if (!res.ok) {
-                                  throw new Error(json.error || 'Failed to initialize payment')
+                                  const detail = Array.isArray(json.violations) && json.violations.length > 0
+                                    ? `${json.error} (${json.violations.join(' ')})`
+                                    : json.error || 'Failed to initialize payment'
+                                  setActionMessage({ type: 'error', text: detail })
+                                  throw new Error(detail)
                                 }
                                 return json.data.paypalOrderId
                               }}
@@ -717,7 +727,9 @@ function ApprovalsContent() {
                                 })
                                 const json = await res.json()
                                 if (!res.ok) {
-                                  throw new Error(json.error || 'Payment capture failed')
+                                  const detail = json.error || 'Payment capture failed'
+                                  setActionMessage({ type: 'error', text: detail })
+                                  throw new Error(detail)
                                 }
                                 setActionMessage({
                                   type: 'success',
@@ -733,10 +745,17 @@ function ApprovalsContent() {
                               }}
                               onError={(err) => {
                                 console.error('PayPal checkout error:', err)
-                                setActionMessage({
-                                  type: 'error',
-                                  text: 'PayPal processing error. Please retry checkout.',
-                                })
+                                setActionMessage((prev) =>
+                                  prev?.type === 'error'
+                                    ? prev
+                                    : {
+                                        type: 'error',
+                                        text:
+                                          err instanceof Error && err.message
+                                            ? err.message
+                                            : 'PayPal processing error. Please retry checkout.',
+                                      }
+                                )
                               }}
                             />
                           </div>
