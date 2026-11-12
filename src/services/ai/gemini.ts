@@ -41,6 +41,7 @@ function toGeminiType(t: string): string {
 }
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
+export const DEFAULT_GEMINI_VISION_MODEL = 'gemini-3.6-flash'
 
 export class GeminiProvider implements AIAgentProvider {
   readonly name = 'gemini'
@@ -61,6 +62,14 @@ export class GeminiProvider implements AIAgentProvider {
 
   getModelName(): string {
     return this.modelName
+  }
+
+  getVisionModelName(): string {
+    return (
+      process.env.GEMINI_VISION_MODEL?.trim() ||
+      process.env.GEMINI_MODEL?.trim() ||
+      DEFAULT_GEMINI_VISION_MODEL
+    )
   }
 
   async generateTurn(
@@ -197,6 +206,8 @@ Return strictly a valid JSON object matching this schema:
 {
   "merchant": "Merchant Name",
   "date": "YYYY-MM-DD",
+  "invoiceNumber": "INV-12345 or null",
+  "customer": "Customer Name or null",
   "currency": "USD",
   "lines": [
     {
@@ -212,33 +223,56 @@ Return strictly a valid JSON object matching this schema:
 }
 
 RULES:
-1. All money values (unitPriceCents, discountCents, lineTotalCents, totalCents) MUST be integer minor units in cents ($14.99 -> 1499).
+1. All money values (unitPriceCents, discountCents, lineTotalCents, totalCents) MUST be integer minor units in cents ($14.99 -> 1499). If receipt lists dollars, multiply by 100 to get integer cents.
 2. quantity must be a positive integer.
 3. lineTotalCents = (quantity * unitPriceCents) - discountCents.
-4. Output ONLY the raw JSON object. Do not wrap in markdown or include extra text.`
+4. Output ONLY valid JSON.`
 
-    const responsePromise = this.ai.models.generateContent({
-      model: this.modelName,
-      contents: [
-        {
-          role: 'user',
-          parts: [
+    const configuredModel = this.getVisionModelName()
+    const candidates = [configuredModel]
+    if (!candidates.includes('gemini-3.6-flash')) candidates.push('gemini-3.6-flash')
+    if (!candidates.includes('gemini-3.8-flash')) candidates.push('gemini-3.8-flash')
+
+    let lastError: unknown = null
+
+    for (const model of candidates) {
+      try {
+        const responsePromise = this.ai.models.generateContent({
+          model,
+          contents: [
             {
-              inlineData: {
-                mimeType,
-                data: base64Data,
-              },
-            },
-            {
-              text: prompt,
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64Data,
+                  },
+                },
+                {
+                  text: prompt,
+                },
+              ],
             },
           ],
-        },
-      ],
-    })
+          config: {
+            responseMimeType: 'application/json',
+          },
+        })
 
-    const response = await withTimeout(responsePromise, CALL_TIMEOUT_MS)
-    return response.text || ''
+        const response = await withTimeout(responsePromise, CALL_TIMEOUT_MS)
+        if (response.text) {
+          return response.text
+        }
+      } catch (err) {
+        lastError = err
+        const status = (err as any)?.status || (err as any)?.statusCode
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[Gemini Vision] Model ${model} failed (status ${status}): ${msg.slice(0, 200)}`)
+      }
+    }
+
+    throw lastError || new Error('All Gemini vision models failed to extract receipt.')
   }
 }
 

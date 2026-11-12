@@ -1,7 +1,9 @@
 import { getAIProvider } from '@/services/ai/factory'
+import { OpenAIProvider } from '@/services/ai/openai'
 import {
   receiptExtractionSchema,
   validateReceiptTotals,
+  cleanJsonOutput,
   ReceiptExtractionData,
 } from './schema'
 import { matchReceiptLineToProduct, MatchResult } from './matching'
@@ -23,6 +25,8 @@ export interface ProcessedReceiptLine {
 export interface ProcessedReceiptExtraction {
   merchant: string
   date: string
+  invoiceNumber?: string | null
+  customer?: string | null
   currency: string
   totalCents: number
   totalsMatch: boolean
@@ -32,56 +36,89 @@ export interface ProcessedReceiptExtraction {
   rawExtractedJson: Record<string, unknown>
 }
 
-/**
- * Strips markdown code fences or conversational text if present to parse raw JSON.
- */
-function cleanJsonOutput(text: string): string {
-  let cleaned = text.trim()
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/, '').trim()
-  }
-  return cleaned
-}
+export { cleanJsonOutput }
 
 /**
- * Runs vision extraction on a receipt image buffer with 1 retry on failure.
+ * Runs vision extraction on a receipt image buffer with 1 retry on failure
+ * and optional OpenAI vision adapter fallback.
  */
 export async function extractReceiptFromImage(
   imageBuffer: Buffer,
   mimeType: string,
   products: Product[]
 ): Promise<ProcessedReceiptExtraction> {
-  const provider = getAIProvider()
-
-  if (!provider.extractReceiptVision) {
-    throw new Error(`AI Provider "${provider.name}" does not support vision extraction`)
-  }
+  const primaryProvider = getAIProvider()
 
   let rawText = ''
   let parsedJson: unknown = null
-  let attempts = 0
+  let lastError: Error | null = null
+  let activeProviderName = primaryProvider.name
+  let activeModelName =
+    primaryProvider.name === 'gemini'
+      ? (primaryProvider as any).getVisionModelName?.() || 'gemini-3.6-flash'
+      : (primaryProvider as any).getModelName?.() || 'gpt-4o'
 
-  while (attempts < 2) {
-    attempts++
+  // Attempt 1 & 2: Primary provider
+  if (primaryProvider.extractReceiptVision) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        rawText = await primaryProvider.extractReceiptVision(imageBuffer, mimeType)
+        const cleaned = cleanJsonOutput(rawText)
+        parsedJson = JSON.parse(cleaned)
+        lastError = null
+        break
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+        console.warn(
+          `[Receipt Extraction] ${activeProviderName} (${activeModelName}) attempt ${attempt} failed: ${lastError.message}`
+        )
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1000))
+        }
+      }
+    }
+  } else {
+    lastError = new Error(
+      `AI Provider "${primaryProvider.name}" does not support vision extraction`
+    )
+  }
+
+  // Fallback to OpenAI vision adapter if primary failed and OPENAI_API_KEY exists
+  if ((!parsedJson || lastError) && process.env.OPENAI_API_KEY && primaryProvider.name !== 'openai') {
+    console.log('[Receipt Extraction] Primary provider failed. Attempting OpenAI vision adapter fallback...')
     try {
-      rawText = await provider.extractReceiptVision(imageBuffer, mimeType)
+      const openAiProvider = new OpenAIProvider()
+      activeProviderName = 'openai'
+      activeModelName = 'gpt-4o'
+      rawText = await openAiProvider.extractReceiptVision(imageBuffer, mimeType)
       const cleaned = cleanJsonOutput(rawText)
       parsedJson = JSON.parse(cleaned)
-      break
-    } catch (err) {
-      if (attempts >= 2) {
-        throw new Error(
-          `Failed to parse receipt vision data into structured JSON: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        )
-      }
-      await new Promise((r) => setTimeout(r, 1000))
+      lastError = null
+      console.log('[Receipt Extraction] OpenAI vision fallback succeeded.')
+    } catch (openAiErr) {
+      console.error('[Receipt Extraction] OpenAI vision adapter fallback also failed:', openAiErr)
+      lastError = openAiErr instanceof Error ? openAiErr : new Error(String(openAiErr))
     }
   }
 
-  // Validate with Zod
-  const validated = receiptExtractionSchema.parse(parsedJson)
+  // If extraction or JSON parsing failed completely, log REAL failure details and throw
+  if (!parsedJson || lastError) {
+    const status = (lastError as any)?.status || (lastError as any)?.statusCode || 500
+    const failureLog = {
+      provider: activeProviderName,
+      model: activeModelName,
+      httpStatus: status,
+      errorMessage: lastError?.message || 'Failed to parse receipt vision data into structured JSON',
+      rawReplyPreview: rawText ? rawText.slice(0, 500) : '<empty>',
+    }
+    console.error('[Receipt Extraction REAL Failure]:', JSON.stringify(failureLog, null, 2))
+    throw new Error(
+      `Receipt extraction failed (${failureLog.provider}/${failureLog.model}, HTTP ${failureLog.httpStatus}): ${failureLog.errorMessage}`
+    )
+  }
+
+  // Validate with tolerant Zod schema
+  const validated: ReceiptExtractionData = receiptExtractionSchema.parse(parsedJson)
   const totalsCheck = validateReceiptTotals(validated)
 
   // Match each line to inventory products
@@ -102,9 +139,11 @@ export async function extractReceiptFromImage(
   })
 
   return {
-    merchant: validated.merchant,
-    date: validated.date,
-    currency: validated.currency,
+    merchant: validated.merchant || 'Store Receipt',
+    date: validated.date || 'N/A',
+    invoiceNumber: validated.invoiceNumber,
+    customer: validated.customer,
+    currency: validated.currency || 'USD',
     totalCents: validated.totalCents,
     totalsMatch: totalsCheck.totalsMatch,
     lineSumCents: totalsCheck.lineSumCents,
@@ -113,4 +152,3 @@ export async function extractReceiptFromImage(
     rawExtractedJson: parsedJson as Record<string, unknown>,
   }
 }
-

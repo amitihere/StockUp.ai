@@ -62,11 +62,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create initial Receipt record in UPLOADED status
+    // Create initial Receipt record in EXTRACTING status
     const receipt = await prisma.receipt.create({
       data: {
         userId: user.id,
-        status: 'UPLOADED',
+        status: 'EXTRACTING',
         imageData: buffer,
         mimeType: file.type,
         fileHash,
@@ -118,14 +118,16 @@ export async function POST(request: NextRequest) {
         }
       })
     } catch (extractErr) {
-      console.error('Vision extraction error:', extractErr)
-      // Allow fallback to manual entry if vision extraction fails
+      const errorMessage =
+        extractErr instanceof Error ? extractErr.message : String(extractErr)
+      console.error('[POST /api/receipts/upload] Vision extraction failed:', errorMessage)
+
       await prisma.receipt.update({
         where: { id: receipt.id },
         data: {
-          status: 'UPLOADED', // Keep uploaded so merchant can enter lines manually
+          status: 'EXTRACTION_FAILED',
           extractedJson: {
-            error: extractErr instanceof Error ? extractErr.message : String(extractErr),
+            error: errorMessage,
           },
         },
       })
@@ -134,13 +136,12 @@ export async function POST(request: NextRequest) {
         {
           data: {
             receiptId: receipt.id,
-            status: 'UPLOADED',
-            warning:
-              'Vision extraction could not parse structured lines automatically. Manual line entry is enabled.',
+            status: 'EXTRACTION_FAILED',
+            error: errorMessage,
             fileHash,
           },
         },
-        { status: 201 }
+        { status: 200 }
       )
     }
 
@@ -155,6 +156,7 @@ export async function POST(request: NextRequest) {
           totalsMatch: extraction.totalsMatch,
           lineSumCents: extraction.lineSumCents,
           linesCount: extraction.lines.length,
+          fileHash,
         },
       },
       { status: 201 }

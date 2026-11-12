@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run tests/policy.test.ts tests/stateMachine.test.ts tests/paypal.test.ts tests/receipts.test.ts tests/agentTools.test.ts",
+    "test:vision": "ts-node -r tsconfig-paths/register --compiler-options '{\"module\":\"CommonJS\"}' scripts/test-vision.ts",
     "test:e2e": "vitest run tests/agent.e2e.test.ts",
     "test:all": "vitest run",
     "prisma:generate": "prisma generate",

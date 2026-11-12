@@ -86,6 +86,7 @@ function ReceiptsContent() {
   const [uploading, setUploading] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [launchingRestock, setLaunchingRestock] = useState(false)
+  const [isExtracting, setIsExtracting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [confirmationResult, setConfirmationResult] = useState<{
@@ -196,6 +197,30 @@ function ReceiptsContent() {
     void fetchReceipts()
   }, [fetchProducts, fetchReceipts])
 
+  const handleRetryExtraction = async (receiptId: string) => {
+    try {
+      setIsExtracting(true)
+      setError(null)
+      setActionSuccess(null)
+      const res = await fetch(`/api/receipts/${receiptId}/extract`, {
+        method: 'POST',
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        throw new Error(json.error || 'Failed to re-run extraction')
+      }
+      setActionSuccess('Vision extraction re-run successfully!')
+      await fetchReceipts()
+      await loadReceiptDetails(receiptId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Re-extraction failed')
+      await fetchReceipts()
+      await loadReceiptDetails(receiptId)
+    } finally {
+      setIsExtracting(false)
+    }
+  }
+
   // Handle file drop / upload
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -219,7 +244,12 @@ function ReceiptsContent() {
         throw new Error(json.error || 'Failed to upload receipt')
       }
 
-      setActionSuccess('Receipt uploaded and parsed via Vision OCR successfully!')
+      if (json.data?.status === 'EXTRACTION_FAILED') {
+        setError(`Vision extraction failed: ${json.data.error || 'Could not parse structured lines'}`)
+      } else {
+        setActionSuccess('Receipt uploaded and parsed via Vision OCR successfully!')
+      }
+
       await fetchReceipts()
       if (json.data?.receiptId) {
         await loadReceiptDetails(json.data.receiptId)
@@ -360,6 +390,34 @@ function ReceiptsContent() {
             <span className="text-xs font-medium text-emerald-300 truncate block">
               {p?.name || params.value}
             </span>
+          )
+        },
+      },
+      {
+        headerName: 'Match Status',
+        width: 140,
+        sortable: false,
+        cellRenderer: (p: ICellRendererParams<EditableReceiptLine>) => {
+          if (!p.data) return null
+          const isMatched = Boolean(p.data.matchedProductId)
+          const conf =
+            p.data.confidence !== undefined && p.data.confidence !== null
+              ? Math.round(p.data.confidence * 100)
+              : null
+          return (
+            <div className="flex items-center h-full">
+              {isMatched ? (
+                <span className="text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Check className="w-3 h-3 text-emerald-400" />
+                  <span>Matched{conf !== null ? ` (${conf}%)` : ''}</span>
+                </span>
+              ) : (
+                <span className="text-[11px] font-semibold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-400" />
+                  <span>Not matched</span>
+                </span>
+              )}
+            </div>
           )
         },
       },
@@ -624,6 +682,10 @@ function ReceiptsContent() {
                                 ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
                                 : r.status === 'EXTRACTED'
                                 ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
+                                : r.status === 'EXTRACTION_FAILED'
+                                ? 'bg-red-500/10 text-red-300 border-red-500/30'
+                                : r.status === 'EXTRACTING'
+                                ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
                                 : 'bg-slate-700 text-slate-300 border-slate-600'
                             }`}
                           >
@@ -663,7 +725,13 @@ function ReceiptsContent() {
                         className={
                           selectedReceipt.status === 'CONFIRMED'
                             ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                            : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                            : selectedReceipt.status === 'EXTRACTED'
+                            ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                            : selectedReceipt.status === 'EXTRACTION_FAILED'
+                            ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                            : selectedReceipt.status === 'EXTRACTING'
+                            ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                            : 'bg-slate-700 text-slate-300 border-slate-600'
                         }
                       >
                         {selectedReceipt.status}
@@ -672,13 +740,43 @@ function ReceiptsContent() {
                     <CardTitle className="text-base font-bold text-white mt-1">
                       {selectedReceipt.merchant || 'Store Receipt'}
                     </CardTitle>
-                    <CardDescription className="text-xs text-slate-400">
-                      Date: {selectedReceipt.date || 'N/A'} · Uploaded:{' '}
-                      {new Date(selectedReceipt.createdAt).toLocaleString(undefined, {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      })}
-                    </CardDescription>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-slate-400">
+                      <span>
+                        Date:{' '}
+                        <strong className="text-slate-200">
+                          {selectedReceipt.date || 'N/A'}
+                        </strong>
+                      </span>
+                      {selectedReceipt.extractedJson?.invoiceNumber && (
+                        <span>
+                          Invoice:{' '}
+                          <strong className="text-slate-200 font-mono">
+                            {selectedReceipt.extractedJson.invoiceNumber}
+                          </strong>
+                        </span>
+                      )}
+                      {selectedReceipt.extractedJson?.customer && (
+                        <span>
+                          Customer:{' '}
+                          <strong className="text-slate-200">
+                            {selectedReceipt.extractedJson.customer}
+                          </strong>
+                        </span>
+                      )}
+                      <span>
+                        Currency:{' '}
+                        <strong className="text-slate-200">
+                          {selectedReceipt.currency || 'USD'}
+                        </strong>
+                      </span>
+                      <span>
+                        Uploaded:{' '}
+                        {new Date(selectedReceipt.createdAt).toLocaleString(undefined, {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        })}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Totals Match Indicator */}
@@ -687,20 +785,60 @@ function ReceiptsContent() {
                     <span className="text-lg font-bold text-white">
                       {formatCurrency(selectedReceipt.totalCents)}
                     </span>
-                    <span
-                      className={`text-[10px] font-semibold block ${
-                        totalsMatch ? 'text-emerald-400' : 'text-amber-400'
-                      }`}
-                    >
-                      {totalsMatch
-                        ? '✓ Lines Sum Matches Total'
-                        : `⚠️ Lines sum: ${formatCurrency(computedLinesTotal)}`}
-                    </span>
+                    {lines.length === 0 ? (
+                      <span className="text-[10px] font-medium text-slate-400 block">
+                        ⚪ No lines extracted yet
+                      </span>
+                    ) : (
+                      <span
+                        className={`text-[10px] font-semibold block ${
+                          totalsMatch ? 'text-emerald-400' : 'text-amber-400'
+                        }`}
+                      >
+                        {totalsMatch
+                          ? '✓ Lines Sum Matches Total'
+                          : `⚠️ Lines sum: ${formatCurrency(computedLinesTotal)}`}
+                      </span>
+                    )}
                   </div>
                 </div>
               </CardHeader>
 
               <CardContent className="p-4 space-y-4">
+                {/* While Extracting Banner */}
+                {(uploading || isExtracting || selectedReceipt.status === 'EXTRACTING') && (
+                  <div className="p-3.5 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-200 text-xs flex items-center gap-2.5">
+                    <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
+                    <span className="font-medium">
+                      Reading receipt with AI... Parsing text, items, and totals.
+                    </span>
+                  </div>
+                )}
+
+                {/* Extraction Failure Banner */}
+                {selectedReceipt.status === 'EXTRACTION_FAILED' && (
+                  <div className="p-3.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-1.5 font-bold text-red-300">
+                        <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                        <span>The AI could not read this receipt:</span>
+                      </div>
+                      <p className="text-slate-300 text-[11px] pl-5">
+                        {selectedReceipt.extractedJson?.error ||
+                          'Vision OCR could not parse tabular transaction data automatically.'}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => void handleRetryExtraction(selectedReceipt.id)}
+                      disabled={isExtracting || uploading}
+                      className="bg-red-600 hover:bg-red-500 text-white text-xs h-7 gap-1.5 flex-shrink-0 self-start sm:self-auto"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isExtracting ? 'animate-spin' : ''}`} />
+                      <span>Retry extraction</span>
+                    </Button>
+                  </div>
+                )}
                 {/* Split Photo & Review Section */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                   {/* Photo Preview (4 cols on desktop) */}

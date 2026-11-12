@@ -57,7 +57,7 @@ export async function GET(
       0
     )
     const discrepancyCents = Math.abs(lineSumCents - receipt.totalCents)
-    const totalsMatch = discrepancyCents === 0
+    const totalsMatch = receipt.lineItems.length > 0 && discrepancyCents === 0
 
     return NextResponse.json({
       data: {
