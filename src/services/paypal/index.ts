@@ -195,7 +195,7 @@ export async function paypalRequest<T>(
  * Sends PayPal-Request-Id for idempotency.
  */
 export async function createPayPalOrder(input: CreatePayPalOrderInput): Promise<PayPalOrder> {
-  const currency = input.currency || 'USD'
+  const currency = (input.currency || 'USD').toUpperCase().trim()
   const formattedTotal = centsToString(input.totalAmountCents)
 
   // Calculate sum of item line totals to ensure item_total matches amount exactly
@@ -237,6 +237,12 @@ export async function createPayPalOrder(input: CreatePayPalOrderInput): Promise<
         items,
       },
     ],
+    application_context: {
+      brand_name: 'StockPilot Procurement',
+      landing_page: 'LOGIN',
+      user_action: 'PAY_NOW',
+      shipping_preference: 'NO_SHIPPING',
+    },
   }
 
   return paypalRequest<PayPalOrder>('/v2/checkout/orders', {

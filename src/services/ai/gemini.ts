@@ -7,8 +7,8 @@ import {
   AIToolCall,
 } from './types'
 
-/** Per-API-call timeout in milliseconds (30 s). */
-const CALL_TIMEOUT_MS = 30_000
+/** Per-API-call timeout in milliseconds (60 s). */
+const CALL_TIMEOUT_MS = 60_000
 
 /** Helper: resolve a promise within a time limit or reject with a timeout error. */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -147,17 +147,39 @@ export class GeminiProvider implements AIAgentProvider {
       }
     }
 
-    // Call the API with a per-request timeout so we never block indefinitely
-    const responsePromise = this.ai.models.generateContent({
-      model: this.modelName,
-      contents: contents as Parameters<typeof this.ai.models.generateContent>[0]['contents'],
-      config: {
-        systemInstruction: systemInstruction || undefined,
-        tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
-      },
-    })
+    // Call the API with model fallbacks and per-request timeout
+    const candidateModels = [this.modelName]
+    for (const alt of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.6-flash']) {
+      if (!candidateModels.includes(alt)) candidateModels.push(alt)
+    }
 
-    const response = await withTimeout(responsePromise, CALL_TIMEOUT_MS)
+    let response: any = null
+    let lastErr: any = null
+
+    for (const model of candidateModels) {
+      try {
+        const responsePromise = this.ai.models.generateContent({
+          model,
+          contents: contents as Parameters<typeof this.ai.models.generateContent>[0]['contents'],
+          config: {
+            systemInstruction: systemInstruction || undefined,
+            tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
+          },
+        })
+
+        response = await withTimeout(responsePromise, CALL_TIMEOUT_MS)
+        if (response) break
+      } catch (err: any) {
+        lastErr = err
+        console.warn(
+          `[Gemini Turn] Model ${model} failed (${err?.message || err}). Trying fallback candidate...`
+        )
+      }
+    }
+
+    if (!response) {
+      throw lastErr || new Error('All candidate Gemini models failed to generate turn.')
+    }
 
     // Extract text
     let text: string | undefined
