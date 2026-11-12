@@ -243,3 +243,151 @@ describe('Agent Tools — Server-Side Price Verification in request_approval', (
     expect(prisma.purchaseOrder.create).not.toHaveBeenCalled()
   })
 })
+
+describe('Agent Tools — Hard Restock Scope Enforcement (productIds in context)', () => {
+  const mockUserId = 'user-123'
+  const mockRunId = 'run-456'
+  const inScopeProductId = 'prod-in-scope'
+  const outOfScopeProductId = 'prod-out-of-scope'
+
+  const inScopeProduct = {
+    id: inScopeProductId,
+    name: 'USB-C Cable 2M',
+    sku: 'CBL-2M',
+    category: 'Cables',
+    currentStock: 1,
+    minStock: 10,
+    unitCost: 500,
+    currency: 'USD',
+    userId: mockUserId,
+  }
+
+  const outOfScopeProduct = {
+    id: outOfScopeProductId,
+    name: 'Wireless Mouse',
+    sku: 'MSE-WL',
+    category: 'Peripherals',
+    currentStock: 0,
+    minStock: 5,
+    unitCost: 1500,
+    currency: 'USD',
+    userId: mockUserId,
+  }
+
+  const sampleSupplierProduct = {
+    id: 'prod-in-scope_c3-offer-1',
+    productId: inScopeProductId,
+    supplierId: 'c3-offer-1',
+    externalName: 'Cables Wholesale',
+    price: 450,
+    currency: 'USD',
+    rating: 4.6,
+    leadTimeDays: 2,
+    inStock: true,
+  }
+
+  const samplePolicy = {
+    id: 'policy-1',
+    monthlyBudget: 200000,
+    maxAutomaticPurchase: 10000,
+    requireApprovalAbove: 10000,
+    minimumProductRating: 4.0,
+    allowAutomaticPurchases: false,
+    currency: 'USD',
+    userId: mockUserId,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getPolicy).mockResolvedValue(samplePolicy as any)
+    vi.mocked(prisma.purchaseOrder.findMany).mockResolvedValue([])
+    vi.mocked(prisma.product.findMany).mockResolvedValue([inScopeProduct] as any)
+    vi.mocked(prisma.supplierProduct.findFirst).mockResolvedValue(sampleSupplierProduct as any)
+    vi.mocked(prisma.supplierProduct.upsert).mockResolvedValue(sampleSupplierProduct as any)
+    vi.mocked(prisma.purchaseOrder.create).mockImplementation((args: any) =>
+      Promise.resolve({
+        id: 'po-scope-order-1',
+        ...args.data,
+      })
+    )
+  })
+
+  it('get_low_stock_products queries only products in scope when productIds is provided', async () => {
+    vi.mocked(prisma.product.findMany).mockResolvedValue([inScopeProduct] as any)
+
+    const result = await executeAgentTool(
+      'get_low_stock_products',
+      {},
+      { userId: mockUserId, runId: mockRunId, productIds: [inScopeProductId] }
+    )
+
+    expect(prisma.product.findMany).toHaveBeenCalledWith({
+      where: {
+        userId: mockUserId,
+        id: { in: [inScopeProductId] },
+      },
+    })
+    expect(result.lowStockProducts).toHaveLength(1)
+    expect((result.lowStockProducts as any[])[0].id).toBe(inScopeProductId)
+  })
+
+  it('create_purchase_proposal REJECTS any item whose productId is not in scope', async () => {
+    const result = await executeAgentTool(
+      'create_purchase_proposal',
+      {
+        items: [
+          {
+            productId: outOfScopeProductId,
+            channel3ProductId: 'c3-offer-1',
+            quantity: 5,
+            reasoning: 'Attempting to restock out of scope product',
+          },
+        ],
+      },
+      { userId: mockUserId, runId: mockRunId, productIds: [inScopeProductId] }
+    )
+
+    expect(result.error).toBe('OUT_OF_SCOPE_PRODUCT')
+    expect(result.message).toContain(outOfScopeProductId)
+  })
+
+  it('request_approval REJECTS any item whose productId is not in scope and refuses to create order', async () => {
+    const result = await executeAgentTool(
+      'request_approval',
+      {
+        items: [
+          {
+            productId: outOfScopeProductId,
+            quantity: 5,
+          },
+        ],
+      },
+      { userId: mockUserId, runId: mockRunId, productIds: [inScopeProductId] }
+    )
+
+    expect(result.error).toBe('OUT_OF_SCOPE_PRODUCT')
+    expect(result.message).toContain(outOfScopeProductId)
+    expect(prisma.purchaseOrder.create).not.toHaveBeenCalled()
+  })
+
+  it('request_approval succeeds when all items are strictly in scope', async () => {
+    vi.mocked(prisma.product.findMany).mockResolvedValue([inScopeProduct] as any)
+    vi.mocked(prisma.supplierProduct.findFirst).mockResolvedValue(sampleSupplierProduct as any)
+
+    const result = await executeAgentTool(
+      'request_approval',
+      {
+        items: [
+          {
+            productId: inScopeProductId,
+            quantity: 5,
+          },
+        ],
+      },
+      { userId: mockUserId, runId: mockRunId, productIds: [inScopeProductId] }
+    )
+
+    expect(result.success).toBe(true)
+    expect(prisma.purchaseOrder.create).toHaveBeenCalled()
+  })
+})

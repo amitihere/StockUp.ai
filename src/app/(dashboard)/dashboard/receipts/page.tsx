@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import {
   ReceiptText,
   Upload,
@@ -25,6 +25,7 @@ import {
   FileText,
   DollarSign,
   TrendingDown,
+  Loader2,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -73,6 +74,7 @@ interface ReceiptSummary {
 }
 
 function ReceiptsContent() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const initialReceiptId = searchParams.get('receiptId') || searchParams.get('id')
 
@@ -83,6 +85,7 @@ function ReceiptsContent() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [launchingRestock, setLaunchingRestock] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [confirmationResult, setConfirmationResult] = useState<{
@@ -97,6 +100,30 @@ function ReceiptsContent() {
   } | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleLaunchRestockAgent = async (productIds: string[], receiptId: string) => {
+    try {
+      setLaunchingRestock(true)
+      setError(null)
+      const res = await fetch('/api/agent/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productIds,
+          receiptId,
+        }),
+      })
+      const json = (await res.json()) as { data?: { runId: string }; error?: string }
+      if (!res.ok || !json.data?.runId) {
+        throw new Error(json.error || `Failed to launch restock agent (${res.status})`)
+      }
+      router.push(`/dashboard/ai-procurement?runId=${json.data.runId}`)
+    } catch (err) {
+      console.error('Error launching restock agent:', err)
+      setError(err instanceof Error ? err.message : 'Failed to launch restock agent')
+      setLaunchingRestock(false)
+    }
+  }
 
   // Fetch all inventory products for line-item dropdown matching
   const fetchProducts = useCallback(async () => {
@@ -504,20 +531,29 @@ function ReceiptsContent() {
             </div>
 
             {confirmationResult.lowStockProducts.length > 0 && selectedReceipt && (
-              <Link
-                href={`/dashboard/ai-procurement?prompt=${encodeURIComponent(
-                  `Restock sales shortages from Receipt #${selectedReceipt.id.slice(
-                    -8
-                  )}. Deficit items: ${confirmationResult.lowStockProducts
-                    .map((p) => `${p.name} (deficit: ${p.deficit})`)
-                    .join(', ')}`
-                )}&receiptId=${selectedReceipt.id}`}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-colors shadow-md shadow-blue-500/20 whitespace-nowrap"
+              <Button
+                onClick={() =>
+                  void handleLaunchRestockAgent(
+                    confirmationResult.lowStockProducts.map((p) => p.id),
+                    selectedReceipt.id
+                  )
+                }
+                disabled={launchingRestock}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-colors shadow-md shadow-blue-500/20 whitespace-nowrap h-auto"
               >
-                <Bot className="w-4 h-4" />
-                <span>Launch Restock Agent</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
+                {launchingRestock ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Launching Restock Agent...</span>
+                  </>
+                ) : (
+                  <>
+                    <Bot className="w-4 h-4" />
+                    <span>Launch Restock Agent</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </>
+                )}
+              </Button>
             )}
           </div>
 

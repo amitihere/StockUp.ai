@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { AgGridReact } from 'ag-grid-react'
 import type { ColDef, ICellRendererParams, RowClassParams } from 'ag-grid-community'
 import {
@@ -12,6 +14,10 @@ import {
   Pencil,
   Trash2,
   FileDown,
+  Sparkles,
+  Loader2,
+  Clock,
+  ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,10 +31,16 @@ import 'ag-grid-community/styles/ag-grid.css'
 import 'ag-grid-community/styles/ag-theme-alpine.css'
 
 export default function InventoryPage() {
+  const router = useRouter()
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [quickFilter, setQuickFilter] = useState('')
+
+  // Restock action states
+  const [restockingProductId, setRestockingProductId] = useState<string | null>(null)
+  const [restockingAll, setRestockingAll] = useState(false)
+  const [bannerMessage, setBannerMessage] = useState<{ type: 'info' | 'error'; text: string } | null>(null)
 
   // Dialog states
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -75,6 +87,86 @@ export default function InventoryPage() {
     setSelectedProduct(null)
     setDialogOpen(true)
   }
+
+  const handleRestockProduct = useCallback(
+    async (product: Product) => {
+      try {
+        setRestockingProductId(product.id)
+        setBannerMessage(null)
+        const res = await fetch('/api/agent/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            productIds: [product.id],
+          }),
+        })
+        const json = (await res.json()) as { data?: { runId: string }; error?: string }
+        if (!res.ok || !json.data?.runId) {
+          throw new Error(json.error || `Failed to launch restock agent (${res.status})`)
+        }
+        router.push(`/dashboard/ai-procurement?runId=${json.data.runId}`)
+      } catch (err) {
+        console.error('Error starting restock:', err)
+        setBannerMessage({
+          type: 'error',
+          text: err instanceof Error ? err.message : 'Failed to launch restock agent',
+        })
+        setRestockingProductId(null)
+      }
+    },
+    [router]
+  )
+
+  const lowStockProducts = useMemo(
+    () =>
+      products.filter(
+        (p) => isLowStock(p.currentStock, p.minStock) || isOutOfStock(p.currentStock)
+      ),
+    [products]
+  )
+
+  const handleRestockAllLowStock = useCallback(async () => {
+    const eligibleProducts = lowStockProducts.filter((p) => !p.openOrderId && !p.runningRunId)
+    const skippedCount = lowStockProducts.length - eligibleProducts.length
+
+    if (eligibleProducts.length === 0) {
+      setBannerMessage({
+        type: 'info',
+        text: `All ${lowStockProducts.length} low-stock products already have pending orders or active agent runs.`,
+      })
+      return
+    }
+
+    if (skippedCount > 0) {
+      setBannerMessage({
+        type: 'info',
+        text: `Skipped ${skippedCount} product(s) with pending orders or active runs. Starting restock for ${eligibleProducts.length} product(s)...`,
+      })
+    }
+
+    try {
+      setRestockingAll(true)
+      const res = await fetch('/api/agent/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productIds: eligibleProducts.map((p) => p.id),
+        }),
+      })
+      const json = (await res.json()) as { data?: { runId: string }; error?: string }
+      if (!res.ok || !json.data?.runId) {
+        throw new Error(json.error || `Failed to launch restock agent (${res.status})`)
+      }
+      router.push(`/dashboard/ai-procurement?runId=${json.data.runId}`)
+    } catch (err) {
+      console.error('Error starting restock all:', err)
+      setBannerMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to launch restock agent',
+      })
+      setRestockingAll(false)
+    }
+  }, [lowStockProducts, router])
 
   // Column definitions with strict TypeScript
   const columnDefs = useMemo<ColDef<Product>[]>(() => {
@@ -177,7 +269,7 @@ export default function InventoryPage() {
       },
       {
         headerName: 'Status',
-        width: 135,
+        width: 130,
         sortable: false,
         filter: false,
         cellRenderer: (params: ICellRendererParams<Product>) => {
@@ -187,8 +279,87 @@ export default function InventoryPage() {
         },
       },
       {
-        headerName: 'Actions',
-        width: 120,
+        headerName: 'Action',
+        width: 180,
+        sortable: false,
+        filter: false,
+        cellRenderer: (params: ICellRendererParams<Product>) => {
+          if (!params.data) return null
+          const prod = params.data
+          const isLow =
+            isLowStock(prod.currentStock, prod.minStock) || isOutOfStock(prod.currentStock)
+          const isCurrentRestocking = restockingProductId === prod.id
+
+          // 1. If product appears in an open purchase order
+          if (prod.openOrderId) {
+            return (
+              <div className="flex items-center h-full">
+                <Link
+                  href={`/dashboard/approvals?orderId=${prod.openOrderId}`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:text-amber-200 hover:bg-amber-500/25 text-[11px] font-medium transition-colors"
+                  title="View pending purchase order on Approvals page"
+                >
+                  <Clock className="w-3 h-3 text-amber-400" />
+                  <span>Order pending</span>
+                  <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                </Link>
+              </div>
+            )
+          }
+
+          // 2. If a run for that product is currently RUNNING
+          if (prod.runningRunId) {
+            return (
+              <div className="flex items-center h-full">
+                <Link
+                  href={`/dashboard/ai-procurement?runId=${prod.runningRunId}`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-blue-500/15 border border-blue-500/30 text-blue-300 hover:text-blue-200 hover:bg-blue-500/25 text-[11px] font-medium transition-colors"
+                  title="View active agent procurement run"
+                >
+                  <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+                  <span>Agent working...</span>
+                  <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                </Link>
+              </div>
+            )
+          }
+
+          // 3. For rows where stock < minStock, show "Restock with AI" button
+          if (isLow) {
+            return (
+              <div className="flex items-center h-full">
+                <Button
+                  size="sm"
+                  onClick={() => void handleRestockProduct(prod)}
+                  disabled={isCurrentRestocking || restockingAll}
+                  className="h-7 px-2.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium flex items-center gap-1.5 shadow-sm shadow-blue-500/20"
+                >
+                  {isCurrentRestocking ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>Starting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3 h-3 text-blue-200" />
+                      <span>Restock with AI</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            )
+          }
+
+          return (
+            <div className="flex items-center h-full text-slate-500 text-xs">
+              <span>—</span>
+            </div>
+          )
+        },
+      },
+      {
+        headerName: 'Manage',
+        width: 85,
         sortable: false,
         filter: false,
         pinned: 'right',
@@ -220,7 +391,7 @@ export default function InventoryPage() {
         },
       },
     ]
-  }, [handleEdit, handleDelete])
+  }, [handleEdit, handleDelete, handleRestockProduct, restockingProductId, restockingAll])
 
   // Visual row flagging for products below minimum
   const getRowClass = useCallback((params: RowClassParams<Product>): string => {
@@ -252,6 +423,27 @@ export default function InventoryPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          {lowStockProducts.length > 0 && (
+            <Button
+              size="sm"
+              onClick={() => void handleRestockAllLowStock()}
+              disabled={restockingAll || Boolean(restockingProductId)}
+              className="bg-amber-600 hover:bg-amber-500 text-white text-xs h-8 gap-1.5 shadow-sm font-semibold"
+            >
+              {restockingAll ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Launching restock...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                  <span>Restock all low stock ({lowStockProducts.length})</span>
+                </>
+              )}
+            </Button>
+          )}
+
           <Button
             variant="outline"
             size="sm"
@@ -273,6 +465,25 @@ export default function InventoryPage() {
           </Button>
         </div>
       </div>
+
+      {/* Banner / Info state */}
+      {bannerMessage && (
+        <div
+          className={`p-3 rounded-lg text-xs flex items-center justify-between ${
+            bannerMessage.type === 'error'
+              ? 'bg-red-500/10 border border-red-500/20 text-red-300'
+              : 'bg-blue-500/10 border border-blue-500/20 text-blue-300'
+          }`}
+        >
+          <span>{bannerMessage.text}</span>
+          <button
+            onClick={() => setBannerMessage(null)}
+            className="text-slate-400 hover:text-white ml-2 text-sm font-bold"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Toolbar: Quick Filter Search & Catalog Status Summary */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0a1322] p-3 rounded-lg border border-[#1c3258]">

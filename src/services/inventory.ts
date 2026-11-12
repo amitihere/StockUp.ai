@@ -30,6 +30,90 @@ export async function getProducts(userId: string) {
 }
 
 /**
+ * Lists all products for the demo user with open order and active run status.
+ */
+export async function getProductsWithStatus(userId: string) {
+  const products = await prisma.product.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  // Open purchase orders (awaiting merchant approval, approved, or pending payment)
+  const openOrders = await prisma.purchaseOrder.findMany({
+    where: {
+      userId,
+      status: { in: ['AWAITING_APPROVAL', 'APPROVED', 'PAYMENT_PENDING'] },
+    },
+    include: {
+      items: {
+        select: { productId: true },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  const openOrderMap = new Map<string, string>()
+  for (const order of openOrders) {
+    for (const item of order.items) {
+      if (!openOrderMap.has(item.productId)) {
+        openOrderMap.set(item.productId, order.id)
+      }
+    }
+  }
+
+  // Active runs currently in RUNNING status
+  const runningRuns = await prisma.procurementRun.findMany({
+    where: {
+      userId,
+      status: 'RUNNING',
+    },
+    include: {
+      agentActivities: {
+        select: {
+          toolName: true,
+          inputData: true,
+        },
+      },
+    },
+    orderBy: { startedAt: 'desc' },
+  })
+
+  const runningRunMap = new Map<string, string>()
+  for (const run of runningRuns) {
+    for (const act of run.agentActivities) {
+      const input = act.inputData as any
+      if (!input || typeof input !== 'object') continue
+
+      if (Array.isArray(input.productIds)) {
+        for (const pid of input.productIds) {
+          if (typeof pid === 'string' && !runningRunMap.has(pid)) {
+            runningRunMap.set(pid, run.id)
+          }
+        }
+      }
+
+      if (typeof input.productId === 'string' && !runningRunMap.has(input.productId)) {
+        runningRunMap.set(input.productId, run.id)
+      }
+
+      if (Array.isArray(input.items)) {
+        for (const it of input.items) {
+          if (typeof it?.productId === 'string' && !runningRunMap.has(it.productId)) {
+            runningRunMap.set(it.productId, run.id)
+          }
+        }
+      }
+    }
+  }
+
+  return products.map((p) => ({
+    ...p,
+    openOrderId: openOrderMap.get(p.id) || null,
+    runningRunId: runningRunMap.get(p.id) || null,
+  }))
+}
+
+/**
  * Finds a single product by ID for the user.
  */
 export async function getProductById(id: string, userId: string) {

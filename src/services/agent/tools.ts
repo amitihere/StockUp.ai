@@ -333,7 +333,7 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
 export async function executeAgentTool(
   toolName: string,
   args: Record<string, unknown>,
-  context: { userId: string; runId: string }
+  context: { userId: string; runId: string; productIds?: string[] }
 ): Promise<Record<string, unknown>> {
   switch (toolName) {
     case 'add_inventory_product': {
@@ -396,8 +396,12 @@ export async function executeAgentTool(
 
     case 'get_low_stock_products': {
       getLowStockProductsSchema.parse(args)
+      const where: { userId: string; id?: { in: string[] } } = { userId: context.userId }
+      if (context.productIds && context.productIds.length > 0) {
+        where.id = { in: context.productIds }
+      }
       const all = await prisma.product.findMany({
-        where: { userId: context.userId },
+        where,
       })
 
       const lowStock = all
@@ -425,7 +429,9 @@ export async function executeAgentTool(
           lowStockProducts: [],
           inventoryIsEmpty: true,
           message:
-            'Inventory is empty. Use add_inventory_product to add products first, then run search_products and create_purchase_proposal.',
+            context.productIds && context.productIds.length > 0
+              ? 'No products found within the specified restock scope.'
+              : 'Inventory is empty. Use add_inventory_product to add products first, then run search_products and create_purchase_proposal.',
         }
       }
 
@@ -646,6 +652,22 @@ export async function executeAgentTool(
 
     case 'create_purchase_proposal': {
       const parsed = createPurchaseProposalSchema.parse(args)
+
+      // Hard scope check: reject any item whose productId is not in scope
+      if (context.productIds && context.productIds.length > 0) {
+        const outOfScope = parsed.items.filter(
+          (item) => !context.productIds!.includes(item.productId)
+        )
+        if (outOfScope.length > 0) {
+          return {
+            error: 'OUT_OF_SCOPE_PRODUCT',
+            message: `Product ID(s) [${outOfScope
+              .map((i) => i.productId)
+              .join(', ')}] are out of the designated procurement scope [${context.productIds.join(', ')}].`,
+          }
+        }
+      }
+
       const policy = await getPolicy(context.userId)
 
       // Fetch store inventory products
@@ -678,6 +700,17 @@ export async function executeAgentTool(
               'Your inventory is empty. Please use the add_inventory_product tool to add the product first, then call create_purchase_proposal with the returned productId.',
             items: [],
             totalAmountCents: 0,
+          }
+        }
+
+        if (
+          context.productIds &&
+          context.productIds.length > 0 &&
+          !context.productIds.includes(prod.id)
+        ) {
+          return {
+            error: 'OUT_OF_SCOPE_PRODUCT',
+            message: `Product "${prod.name}" (${prod.id}) is out of the designated procurement scope [${context.productIds.join(', ')}].`,
           }
         }
 
@@ -842,6 +875,21 @@ export async function executeAgentTool(
         return {
           error: 'EMPTY_ITEMS',
           message: 'Cannot request approval without any replenishment items.',
+        }
+      }
+
+      // Hard scope check: reject any item whose productId is not in scope
+      if (context.productIds && context.productIds.length > 0) {
+        const outOfScope = parsed.items.filter(
+          (item) => !context.productIds!.includes(item.productId)
+        )
+        if (outOfScope.length > 0) {
+          return {
+            error: 'OUT_OF_SCOPE_PRODUCT',
+            message: `Product ID(s) [${outOfScope
+              .map((i) => i.productId)
+              .join(', ')}] are out of the designated procurement scope [${context.productIds.join(', ')}]. Order creation rejected.`,
+          }
         }
       }
 

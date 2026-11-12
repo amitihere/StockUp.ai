@@ -12,6 +12,8 @@ export interface Product {
   createdAt: string | Date
   updatedAt: string | Date
   userId: string
+  openOrderId?: string | null
+  runningRunId?: string | null
 }
 
 export interface ProcurementPolicy {

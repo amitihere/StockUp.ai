@@ -87,14 +87,17 @@ function AiProcurementContent() {
   const searchParams = useSearchParams()
   const initialPrompt = searchParams.get('prompt')
   const initialReceiptId = searchParams.get('receiptId')
+  const initialRunId = searchParams.get('runId')
 
-  const [prompt, setPrompt] = useState(initialPrompt || 'Restock my store under $500. Prioritize quality and value.')
+  const [prompt, setPrompt] = useState(
+    initialPrompt || 'Restock my store under $500. Prioritize quality and value.'
+  )
   const [budgetDollars, setBudgetDollars] = useState('500')
   const [receiptId, setReceiptId] = useState<string | null>(initialReceiptId)
-  const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  const [activeRunId, setActiveRunId] = useState<string | null>(initialRunId)
   const [runData, setRunData] = useState<ProcurementRunData | null>(null)
   const [activities, setActivities] = useState<AgentActivityItem[]>([])
-  const [isRunning, setIsRunning] = useState(false)
+  const [isRunning, setIsRunning] = useState(Boolean(initialRunId))
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [expandedActivityIds, setExpandedActivityIds] = useState<Record<string, boolean>>({})
 
@@ -105,7 +108,11 @@ function AiProcurementContent() {
     if (initialReceiptId) {
       setReceiptId(initialReceiptId)
     }
-  }, [initialPrompt, initialReceiptId])
+    if (initialRunId) {
+      setActiveRunId(initialRunId)
+      setIsRunning(true)
+    }
+  }, [initialPrompt, initialReceiptId, initialRunId])
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -164,6 +171,15 @@ function AiProcurementContent() {
 
       if (json.data) {
         setActivities(json.data.activities || [])
+
+        // If run has agent_start activity, synchronize prompt display
+        const startActivity = json.data.activities?.find(
+          (a) => a.toolName === 'agent_start'
+        )
+        const loggedPrompt = (startActivity?.inputData as any)?.userPrompt
+        if (loggedPrompt && typeof loggedPrompt === 'string') {
+          setPrompt(loggedPrompt)
+        }
 
         if (json.data.run.status !== 'RUNNING') {
           setIsRunning(false)

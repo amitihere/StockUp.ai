@@ -7,11 +7,22 @@ import { z } from 'zod'
 
 export const dynamic = 'force-dynamic'
 
-const runRequestSchema = z.object({
-  prompt: z.string().trim().min(1, 'Prompt is required'),
-  budgetDollars: z.coerce.number().min(1).optional(),
-  receiptId: z.string().optional(),
-})
+const runRequestSchema = z
+  .object({
+    prompt: z.string().trim().optional(),
+    budgetDollars: z.coerce.number().min(1).optional(),
+    receiptId: z.string().optional(),
+    productIds: z.array(z.string()).optional(),
+  })
+  .refine(
+    (data) =>
+      (data.prompt && data.prompt.length > 0) ||
+      (Array.isArray(data.productIds) && data.productIds.length > 0),
+    {
+      message: 'Either prompt or productIds must be provided',
+      path: ['prompt'],
+    }
+  )
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,14 +40,40 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { prompt, budgetDollars, receiptId } = validation.data
+    const { prompt, budgetDollars, receiptId, productIds } = validation.data
     const ownerBudgetCents = budgetDollars ? dollarsToCents(budgetDollars) : undefined
+
+    // Build server-generated prompt when productIds are provided
+    let effectivePrompt = prompt?.trim() || ''
+
+    if (productIds && productIds.length > 0) {
+      const targetedProducts = await prisma.product.findMany({
+        where: {
+          userId: user.id,
+          id: { in: productIds },
+        },
+      })
+
+      if (targetedProducts.length > 0) {
+        const productDescriptions = targetedProducts
+          .map(
+            (p) => `${p.name} (SKU: ${p.sku}, current stock: ${p.currentStock}, minimum: ${p.minStock})`
+          )
+          .join(', ')
+        const generatedPrompt = `Restock these products: ${productDescriptions}. Prioritize quality and value, stay within the remaining monthly budget.`
+        if (!effectivePrompt) {
+          effectivePrompt = generatedPrompt
+        }
+      } else if (!effectivePrompt) {
+        effectivePrompt = 'Restock targeted low-stock products within the remaining monthly budget.'
+      }
+    }
 
     // 1. Create a ProcurementRun record in RUNNING status
     const run = await prisma.procurementRun.create({
       data: {
         status: 'RUNNING',
-        triggerType: receiptId ? 'RECEIPT' : 'MANUAL',
+        triggerType: receiptId ? 'RECEIPT' : productIds && productIds.length > 0 ? 'LOW_STOCK' : 'MANUAL',
         userId: user.id,
         receiptId: receiptId || null,
       },
@@ -46,8 +83,9 @@ export async function POST(request: NextRequest) {
     void runProcurementAgent({
       runId: run.id,
       userId: user.id,
-      userPrompt: prompt,
+      userPrompt: effectivePrompt,
       ownerBudgetCents,
+      productIds,
     }).catch(async (error) => {
       console.error(`Agent run ${run.id} failed:`, error)
       await prisma.procurementRun.update({

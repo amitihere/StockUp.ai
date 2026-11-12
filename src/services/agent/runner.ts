@@ -55,6 +55,7 @@ export interface AgentRunOptions {
   userId: string
   userPrompt: string
   ownerBudgetCents?: number
+  productIds?: string[]
 }
 
 /** Exponential backoff for Gemini rate-limit errors (429 / 503 / quota). */
@@ -88,6 +89,7 @@ export async function runProcurementAgent({
   userId,
   userPrompt,
   ownerBudgetCents,
+  productIds,
 }: AgentRunOptions) {
   const startTime = Date.now()
   const provider = getAIProvider()
@@ -98,10 +100,19 @@ export async function runProcurementAgent({
       runId,
       type: 'LOG',
       toolName: 'agent_start',
-      inputData: { userPrompt, ownerBudgetCents },
-      outputData: { status: 'started', provider: provider.name },
+      inputData: { userPrompt, ownerBudgetCents, productIds: productIds || null },
+      outputData: {
+        status: 'started',
+        provider: provider.name,
+        scopedProductIds: productIds || null,
+      },
     },
   })
+
+  let effectiveSystemPrompt = SYSTEM_PROMPT
+  if (productIds && productIds.length > 0) {
+    effectiveSystemPrompt += `\n\nHARD SCOPE RESTRICTION: This run is strictly authorized ONLY for product ID(s): [${productIds.join(', ')}]. You MUST ONLY restock these products. Never propose or request approval for any other products.`
+  }
 
   const messages: AIMessage[] = [
     {
@@ -141,7 +152,7 @@ export async function runProcurementAgent({
     let turnResult
     try {
       turnResult = await callWithBackoff(() =>
-        provider.generateTurn(messages, MODEL_TOOLS, SYSTEM_PROMPT)
+        provider.generateTurn(messages, MODEL_TOOLS, effectiveSystemPrompt)
       )
     } catch (err) {
       // Fatal error — log and rethrow
@@ -190,7 +201,11 @@ export async function runProcurementAgent({
         let isError = false
 
         try {
-          result = await executeAgentTool(call.name, call.args, { userId, runId })
+          result = await executeAgentTool(call.name, call.args, {
+            userId,
+            runId,
+            productIds,
+          })
         } catch (toolErr) {
           isError = true
           result = {

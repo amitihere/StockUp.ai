@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDemoUser, getProducts, createProduct } from '@/services/inventory'
+import { getDemoUser, getProductsWithStatus, createProduct } from '@/services/inventory'
 import { productCreateSchema } from '@/lib/validations'
 import { Prisma } from '@prisma/client'
 
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     const user = await getDemoUser()
-    const products = await getProducts(user.id)
+    const products = await getProductsWithStatus(user.id)
     return NextResponse.json({ data: products })
   } catch (error) {
     console.error('Error in GET /api/inventory:', error)
