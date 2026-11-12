@@ -21,11 +21,21 @@ export const getInventorySchema = z.object({
   category: z.string().optional(),
 })
 
+export const addInventoryProductSchema = z.object({
+  name: z.string().min(1, 'Product name is required'),
+  sku: z.string().min(1, 'SKU is required'),
+  category: z.string().min(1, 'Category is required'),
+  currentStock: z.number().int().min(0).default(0),
+  minStock: z.number().int().min(1).default(5),
+  unitCostCents: z.number().int().min(0).default(0),
+})
+
 export const getLowStockProductsSchema = z.object({})
 
 export const searchProductsSchema = z.object({
   query: z.string().min(1, 'Query is required'),
   limit: z.number().int().min(1).max(10).optional().default(3),
+  productId: z.string().optional(),
 })
 
 export const getProductDetailsSchema = z.object({
@@ -82,22 +92,39 @@ export const requestApprovalSchema = z.object({
   runId: z.string().optional(),
   items: z.array(
     z.object({
-      productId: z.string(),
+      productId: z.string().min(1, 'Product ID is required'),
       productName: z.string().optional().default('Product'),
-      quantity: z.number().int().positive(),
-      unitPrice: z.number().int().nonnegative(),
-      totalPrice: z.number().int().nonnegative().optional(),
+      quantity: z.number(),
+      unitPrice: z.number().optional(), // Ignored: server recomputes from SupplierProduct
+      totalPrice: z.number().optional(), // Ignored: server recomputes
       reasoning: z.string().optional().default('Restock proposal'),
       retailer: z.string().optional(),
       channel3ProductId: z.string().optional(),
     })
   ),
-  totalAmount: z.number().int().positive(),
+  totalAmount: z.number().optional(), // Ignored: server recomputes
   notes: z.string().optional(),
 })
 
 // Tool Definitions for the LLM
 export const AGENT_TOOLS: AIToolDefinition[] = [
+  {
+    name: 'add_inventory_product',
+    description:
+      'Add a brand-new product to the store inventory when it does not already exist. Use this when the store has an empty inventory or when the user asks to add/create a new product. Returns the new product ID to use in create_purchase_proposal.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Full product name (e.g. "USB-C Wall Charger 20W PD")' },
+        sku: { type: 'string', description: 'Short unique SKU code (e.g. "CHG-USBC-20W")' },
+        category: { type: 'string', description: 'Product category (e.g. "Charging", "Cables", "Peripherals", "Audio", "Accessories")' },
+        currentStock: { type: 'number', description: 'Starting stock quantity (default 0)' },
+        minStock: { type: 'number', description: 'Minimum stock threshold before reorder (default 5)' },
+        unitCostCents: { type: 'number', description: 'Unit cost in integer cents (e.g. 1499 = $14.99). Set 0 if unknown.' },
+      },
+      required: ['name', 'sku', 'category'],
+    },
+  },
   {
     name: 'get_inventory',
     description:
@@ -149,6 +176,10 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
         query: {
           type: 'string',
           description: 'Search query for the product (e.g. "USB-C wall charger 20W").',
+        },
+        productId: {
+          type: 'string',
+          description: 'Optional store inventory product ID being sourced to link supplier offers directly to this item.',
         },
         limit: {
           type: 'number',
@@ -273,7 +304,7 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
   {
     name: 'request_approval',
     description:
-      'Save the validated purchase order to the database with status AWAITING_APPROVAL for merchant review. This is the terminal tool call for the agent.',
+      'Save the validated purchase order to the database with status AWAITING_APPROVAL for merchant review. All line item prices and totals are verified and calculated server-side from stored supplier catalog data. This is the terminal tool call for the agent.',
     parameters: {
       type: 'object',
       properties: {
@@ -283,21 +314,18 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
           items: {
             type: 'object',
             properties: {
-              productId: { type: 'string' },
-              productName: { type: 'string' },
-              quantity: { type: 'number' },
-              unitPrice: { type: 'number' },
-              totalPrice: { type: 'number' },
-              reasoning: { type: 'string' },
-              retailer: { type: 'string' },
-              channel3ProductId: { type: 'string' },
+              productId: { type: 'string', description: 'Internal store inventory product ID' },
+              quantity: { type: 'number', description: 'Positive integer quantity to order' },
+              channel3ProductId: { type: 'string', description: 'Optional Channel3 supplier product ID' },
+              reasoning: { type: 'string', description: 'Restock justification' },
+              retailer: { type: 'string', description: 'Supplier/retailer name' },
             },
+            required: ['productId', 'quantity'],
           },
         },
-        totalAmount: { type: 'number', description: 'Total order cost in cents' },
         notes: { type: 'string', description: 'Executive summary for the store owner' },
       },
-      required: ['items', 'totalAmount'],
+      required: ['items'],
     },
   },
 ]
@@ -309,6 +337,39 @@ export async function executeAgentTool(
   context: { userId: string; runId: string }
 ): Promise<Record<string, unknown>> {
   switch (toolName) {
+    case 'add_inventory_product': {
+      const parsed = addInventoryProductSchema.parse(args)
+
+      // Generate a unique SKU suffix to avoid collisions
+      const baseSku = parsed.sku.toUpperCase().replace(/[^A-Z0-9\-]/g, '-')
+      const existing = await prisma.product.findFirst({ where: { sku: baseSku } })
+      const finalSku = existing ? `${baseSku}-${Date.now().toString(36).toUpperCase()}` : baseSku
+
+      const newProduct = await prisma.product.create({
+        data: {
+          name: parsed.name,
+          sku: finalSku,
+          category: parsed.category,
+          currentStock: parsed.currentStock,
+          minStock: parsed.minStock,
+          unitCost: parsed.unitCostCents,
+          currency: 'USD',
+          userId: context.userId,
+        },
+      })
+
+      return {
+        success: true,
+        productId: newProduct.id,
+        name: newProduct.name,
+        sku: newProduct.sku,
+        category: newProduct.category,
+        currentStock: newProduct.currentStock,
+        minStock: newProduct.minStock,
+        message: `Product "${newProduct.name}" (SKU: ${newProduct.sku}) created in inventory with ID ${newProduct.id}. Use this productId in create_purchase_proposal.`,
+      }
+    }
+
     case 'get_inventory': {
       const parsed = getInventorySchema.parse(args)
       const where: { userId: string; category?: string } = { userId: context.userId }
@@ -359,6 +420,15 @@ export async function executeAgentTool(
           if (a.isOutOfStock !== b.isOutOfStock) return a.isOutOfStock ? -1 : 1
           return b.deficit - a.deficit
         })
+
+      if (all.length === 0) {
+        return {
+          lowStockProducts: [],
+          inventoryIsEmpty: true,
+          message:
+            'Inventory is empty. Use add_inventory_product to add products first, then run search_products and create_purchase_proposal.',
+        }
+      }
 
       return { lowStockProducts: lowStock }
     }
@@ -426,15 +496,37 @@ export async function executeAgentTool(
 
       // Pre-save all results to DB so create_purchase_proposal can reuse
       // them without an extra Channel3 API call (saves quota on free tier).
-      // We try to find any matching inventory product to link against.
+      // Link supplier offers to the specific product actually being sourced.
       const allProducts = await prisma.product.findMany({
         where: { userId: context.userId },
-        select: { id: true, name: true },
+        select: { id: true, name: true, sku: true },
       })
-      const firstProductId = allProducts[0]?.id
-      if (firstProductId) {
+
+      let targetProduct = parsed.productId
+        ? allProducts.find((p) => p.id === parsed.productId)
+        : undefined
+
+      if (!targetProduct && parsed.query) {
+        const q = parsed.query.toLowerCase().trim()
+        targetProduct =
+          allProducts.find((p) => q.includes(p.sku.toLowerCase()) || p.sku.toLowerCase().includes(q)) ||
+          allProducts.find((p) => {
+            const nameLower = p.name.toLowerCase()
+            return q.includes(nameLower) || nameLower.includes(q)
+          })
+
+        if (!targetProduct) {
+          const qTokens = q.split(/[^a-z0-9]+/i).filter((t) => t.length > 2)
+          targetProduct = allProducts.find((p) => {
+            const pTokens = p.name.toLowerCase().split(/[^a-z0-9]+/i).filter((t) => t.length > 2)
+            return qTokens.some((qt) => pTokens.includes(qt))
+          })
+        }
+      }
+
+      if (targetProduct) {
         await Promise.allSettled(
-          results.map((p) => saveSupplierProduct(firstProductId, p))
+          results.map((p) => saveSupplierProduct(targetProduct!.id, p))
         )
       }
 
@@ -442,6 +534,7 @@ export async function executeAgentTool(
       return {
         query: parsed.query,
         count: results.length,
+        inventoryIsEmpty: allProducts.length === 0,
         products: results.map((p) => ({
           id: p.id,
           title: p.title.slice(0, 100),
@@ -578,7 +671,16 @@ export async function executeAgentTool(
         if (!prod && allUserProducts.length > 0) {
           prod = allUserProducts[0]
         }
-        if (!prod) continue
+        if (!prod) {
+          // Inventory is completely empty — return a helpful error rather than silently skipping
+          return {
+            error: 'EMPTY_INVENTORY',
+            message:
+              'Your inventory is empty. Please use the add_inventory_product tool to add the product first, then call create_purchase_proposal with the returned productId.',
+            items: [],
+            totalAmountCents: 0,
+          }
+        }
 
         // --- Resolve Channel3 product: DB first, then API (saves quota) ---
         let channel3Product
@@ -642,10 +744,30 @@ export async function executeAgentTool(
         })
       }
 
+      // Compute this month's already committed spend so proposal matches checkout policy
+      const startOfMonth = new Date()
+      startOfMonth.setDate(1)
+      startOfMonth.setHours(0, 0, 0, 0)
+
+      const committedOrders = await prisma.purchaseOrder.findMany({
+        where: {
+          userId: context.userId,
+          createdAt: { gte: startOfMonth },
+          status: { in: ['APPROVED', 'PAYMENT_PENDING', 'PAID'] },
+        },
+        select: { totalAmount: true },
+      })
+
+      const thisMonthCommittedCents = committedOrders.reduce(
+        (sum, o) => sum + o.totalAmount,
+        0
+      )
+      const remainingMonthly = Math.max(0, policy.monthlyBudget - thisMonthCommittedCents)
+
       // Check budget and trim if necessary
       const maxAllowed = parsed.ownerBudgetCents
-        ? Math.min(parsed.ownerBudgetCents, policy.monthlyBudget)
-        : policy.monthlyBudget
+        ? Math.min(parsed.ownerBudgetCents, remainingMonthly)
+        : remainingMonthly
 
       let finalItems = drafts
       let total = drafts.reduce((sum, d) => sum + d.totalPrice, 0)
@@ -660,7 +782,7 @@ export async function executeAgentTool(
       const policyEval = validatePurchasePolicy(
         finalItems,
         policy,
-        0,
+        thisMonthCommittedCents,
         parsed.ownerBudgetCents
       )
 
@@ -717,39 +839,206 @@ export async function executeAgentTool(
     case 'request_approval': {
       const parsed = requestApprovalSchema.parse(args)
 
-      // Ensure all productIds match valid store products (prevent foreign key failures)
+      if (!parsed.items || parsed.items.length === 0) {
+        return {
+          error: 'EMPTY_ITEMS',
+          message: 'Cannot request approval without any replenishment items.',
+        }
+      }
+
+      // Fetch all user products
       const storeProducts = await prisma.product.findMany({
         where: { userId: context.userId },
-        select: { id: true, name: true },
-      })
-      const validProductIds = new Set(storeProducts.map((p) => p.id))
-
-      const resolvedItems = parsed.items.map((item) => {
-        if (validProductIds.has(item.productId)) {
-          return item
-        }
-        const nameMatch = storeProducts.find(
-          (p) => p.name.toLowerCase() === item.productName.toLowerCase()
-        )
-        if (nameMatch) {
-          return { ...item, productId: nameMatch.id }
-        }
-        return { ...item, productId: storeProducts[0]?.id || item.productId }
       })
 
-      // Create purchase order in database
+      if (storeProducts.length === 0) {
+        return {
+          error: 'EMPTY_INVENTORY',
+          message:
+            'Cannot create a purchase order: inventory is empty. Use add_inventory_product to add products first.',
+        }
+      }
+
+      const productMap = new Map(storeProducts.map((p) => [p.id, p]))
+
+      interface VerifiedItem {
+        product: typeof storeProducts[0]
+        supplierProduct: {
+          id: string
+          supplierId: string
+          price: number
+          externalName: string | null
+          rating: number
+        }
+        quantity: number
+        unitPrice: number
+        lineTotal: number
+        reasoning: string
+        retailer: string
+      }
+
+      const recomputedItems: VerifiedItem[] = []
+
+      for (const item of parsed.items) {
+        // 1. Verify integer and positive quantity (reject non-integer or non-positive quantities)
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+          return {
+            error: 'INVALID_QUANTITY',
+            message: `Invalid quantity "${item.quantity}" for product ID "${item.productId}". Quantity must be a positive integer.`,
+          }
+        }
+
+        // 2. Verify product exists in user inventory (reject unknown products)
+        const product = productMap.get(item.productId)
+        if (!product) {
+          return {
+            error: 'UNKNOWN_PRODUCT',
+            message: `Unknown inventory product ID "${item.productId}". All items must reference an existing store product.`,
+          }
+        }
+
+        // 3. Look up stored best offer in SupplierProduct table
+        let supplierProduct: {
+          id: string
+          supplierId: string
+          price: number
+          externalName: string | null
+          rating: number
+        } | null = null
+
+        if (item.channel3ProductId) {
+          supplierProduct = await prisma.supplierProduct.findFirst({
+            where: {
+              productId: product.id,
+              supplierId: item.channel3ProductId,
+            },
+            select: {
+              id: true,
+              supplierId: true,
+              price: true,
+              externalName: true,
+              rating: true,
+            },
+          })
+        }
+
+        if (!supplierProduct) {
+          supplierProduct = await prisma.supplierProduct.findFirst({
+            where: {
+              productId: product.id,
+              price: { gt: 0 },
+            },
+            orderBy: [{ inStock: 'desc' }, { price: 'asc' }],
+            select: {
+              id: true,
+              supplierId: true,
+              price: true,
+              externalName: true,
+              rating: true,
+            },
+          })
+        }
+
+        // Reject items without a stored price
+        if (
+          !supplierProduct ||
+          typeof supplierProduct.price !== 'number' ||
+          supplierProduct.price <= 0
+        ) {
+          return {
+            error: 'MISSING_STORED_PRICE',
+            message: `No verified supplier price found in database for product "${product.name}" (${product.id}). Items without a stored supplier offer cannot be approved.`,
+          }
+        }
+
+        // 4. Server computes line total in integer cents (IGNORING model's unitPrice/totalPrice)
+        const serverUnitPrice = supplierProduct.price
+        const serverLineTotal = serverUnitPrice * item.quantity
+
+        recomputedItems.push({
+          product,
+          supplierProduct,
+          quantity: item.quantity,
+          unitPrice: serverUnitPrice,
+          lineTotal: serverLineTotal,
+          reasoning: item.reasoning || `Restock requirement for ${product.name}`,
+          retailer:
+            supplierProduct.externalName ||
+            item.retailer ||
+            supplierProduct.supplierId ||
+            'Channel3 Supplier',
+        })
+      }
+
+      // 5. Recompute order total in integer cents on the server (IGNORING model's totalAmount)
+      const serverOrderTotal = recomputedItems.reduce((sum, i) => sum + i.lineTotal, 0)
+
+      // 6. Run policy engine validation on the recomputed proposal
+      const policy = await getPolicy(context.userId)
+
+      const startOfMonth = new Date()
+      startOfMonth.setDate(1)
+      startOfMonth.setHours(0, 0, 0, 0)
+
+      const committedOrders = await prisma.purchaseOrder.findMany({
+        where: {
+          userId: context.userId,
+          createdAt: { gte: startOfMonth },
+          status: { in: ['APPROVED', 'PAYMENT_PENDING', 'PAID'] },
+        },
+        select: { totalAmount: true },
+      })
+
+      const thisMonthCommittedCents = committedOrders.reduce(
+        (sum, o) => sum + o.totalAmount,
+        0
+      )
+
+      const drafts: ProposalItemDraft[] = recomputedItems.map((item) => ({
+        productId: item.product.id,
+        productName: item.product.name,
+        currentStock: item.product.currentStock,
+        minStock: item.product.minStock,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.lineTotal,
+        reasoning: item.reasoning,
+        rating: item.supplierProduct.rating,
+        channel3ProductId: item.supplierProduct.supplierId,
+        retailer: item.retailer,
+        supplierProductId: item.supplierProduct.id,
+      }))
+
+      const evaluation = validatePurchasePolicy(
+        drafts,
+        policy,
+        thisMonthCommittedCents
+      )
+
+      // REFUSE to create order if any policy rule fails
+      if (!evaluation.passed) {
+        return {
+          error: 'POLICY_VIOLATION',
+          message: `Procurement policy validation failed: ${evaluation.violations.join('; ')}`,
+          violations: evaluation.violations,
+          recomputedTotalCents: serverOrderTotal,
+          recomputedTotalFormatted: `$${(serverOrderTotal / 100).toFixed(2)}`,
+        }
+      }
+
+      // 7. Create PurchaseOrder in database with verified server-calculated amounts
       const purchaseOrder = await prisma.purchaseOrder.create({
         data: {
           status: 'AWAITING_APPROVAL',
-          totalAmount: parsed.totalAmount,
+          totalAmount: serverOrderTotal,
           currency: 'USD',
-          supplierId: parsed.items[0]?.retailer || 'Channel3 Supplier',
+          supplierId: recomputedItems[0]?.retailer || 'Channel3 Supplier',
           notes: parsed.notes || 'Automated AI procurement replenishment proposal.',
           userId: context.userId,
           procurementRunId: context.runId,
           items: {
-            create: resolvedItems.map((item) => ({
-              productId: item.productId,
+            create: recomputedItems.map((item) => ({
+              productId: item.product.id,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               currency: 'USD',
@@ -779,9 +1068,10 @@ export async function executeAgentTool(
         purchaseOrderId: purchaseOrder.id,
         status: 'AWAITING_APPROVAL',
         totalAmountFormatted: `$${(purchaseOrder.totalAmount / 100).toFixed(2)}`,
-        itemsCount: parsed.items.length,
+        totalAmountCents: purchaseOrder.totalAmount,
+        itemsCount: recomputedItems.length,
         message:
-          'Purchase proposal created successfully and routed to Approvals with status AWAITING_APPROVAL.',
+          'Purchase proposal verified with server-side prices and policy validation. Created and routed to Approvals with status AWAITING_APPROVAL.',
       }
     }
 

@@ -11,6 +11,8 @@ import { AGENT_TOOLS, executeAgentTool } from './tools'
  */
 const MODEL_TOOLS = AGENT_TOOLS.filter((t) =>
   [
+    'add_inventory_product',
+    'get_inventory',
     'get_low_stock_products',
     'get_sales_velocity',
     'search_products',
@@ -29,13 +31,24 @@ RULES (non-negotiable):
 4. Use 'recommendedRestockQuantity' from get_low_stock_products or 'recommendedRestock' from get_sales_velocity. Do not calculate quantities yourself.
 
 STEPS — call one tool per reply:
+
+CASE A — Inventory already has products:
   1. get_low_stock_products (or get_sales_velocity if asked about sales trends/velocity) → identify replenishment target
   2. search_products         → query="<item name>" limit=3
   3. create_purchase_proposal → pass the internal productId, the best Channel3 product id from search, and recommended restock quantity
   4. request_approval        → submit proposal for merchant review
   5. Text reply              → concise summary for store owner
 
-IMPORTANT: If the user mentions a specific product (e.g. "Mac case charging"), focus search on that item even if it is not the #1 low-stock item. Use a precise search term like "MagSafe wireless charging stand" rather than a vague description.`
+CASE B — Inventory is empty OR create_purchase_proposal returns EMPTY_INVENTORY error:
+  1. search_products         → find the best matching product from the user's request
+  2. add_inventory_product   → create the product in inventory using the name/category from the search result (currentStock=0, minStock=5)
+  3. search_products         → search again (same query) so supplier data is linked to the new product
+  4. create_purchase_proposal → use the new productId from step 2 and best Channel3 product id, quantity=10
+  5. request_approval        → submit proposal for merchant review
+  6. Text reply              → concise summary for store owner
+
+IMPORTANT: If the user mentions a specific product (e.g. "Mac case charging"), focus search on that item even if it is not the #1 low-stock item. Use a precise search term like "MagSafe wireless charging stand" rather than a vague description.
+IMPORTANT: If get_low_stock_products returns an empty list (no low-stock items), use get_inventory to check all products. If inventory is completely empty, follow CASE B.`
 
 export interface AgentRunOptions {
   runId: string
