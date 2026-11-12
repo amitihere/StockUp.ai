@@ -40,12 +40,14 @@ function toGeminiType(t: string): string {
   }
 }
 
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
+
 export class GeminiProvider implements AIAgentProvider {
   readonly name = 'gemini'
   private ai: GoogleGenAI
   private modelName: string
 
-  constructor(apiKey?: string, modelName: string = 'gemini-3.1-flash-lite') {
+  constructor(apiKey?: string, modelName?: string) {
     const key = apiKey || process.env.GEMINI_API_KEY
     if (!key) {
       throw new Error(
@@ -54,7 +56,11 @@ export class GeminiProvider implements AIAgentProvider {
     }
     // @google/genai v2 SDK — handles thought_signature automatically
     this.ai = new GoogleGenAI({ apiKey: key.trim() })
-    this.modelName = modelName
+    this.modelName = modelName || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL
+  }
+
+  getModelName(): string {
+    return this.modelName
   }
 
   async generateTurn(

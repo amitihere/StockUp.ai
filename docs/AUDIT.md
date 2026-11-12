@@ -145,7 +145,7 @@ PayPal is **architecturally central to financial execution** (server-side Orders
 | Deployment config | **Partial** | `[CODE]` | `render.yaml`, `DEPLOY.md`, `src/app/api/health/route.ts` | `render.yaml` exists and `/api/health` checks DB, but `render.yaml` sets `GEMINI_MODEL=gemini-2.5-flash` which the code ignores. |
 | README | **Done** | `[CODE]` | `README.md` | Clear setup, architecture diagram, env vars, demo reset, AI models, and honest scope. |
 | LICENSE | **Done** | `[CODE]` | `LICENSE` | MIT License present. |
-| AI models list | **Partial** | `[CODE]` | `README.md` (L168-177), `src/services/ai/gemini.ts` (L48) | `README.md` lists `gemini-2.5-flash` and `gpt-4o`, whereas code actually defaults to `gemini-3.1-flash-lite`. |
+| AI models list | **Done** | `[CODE]` | `README.md` (L168-177), `src/services/ai/gemini.ts` (L48) | Aligned: defaults to `gemini-2.5-flash` via `process.env.GEMINI_MODEL`. |
 | Tests | **Partial** | `[RAN]` | `tests/*.test.ts` | 38 unit tests pass (`npm test`), but `agent.e2e.test.ts` fails and `e2e.flow.test.ts` skips without a local Postgres server. |
 
 ---
@@ -225,7 +225,7 @@ The production build compiles (`[RAN]`), unit tests pass (`[RAN]`), and the code
 | Public GitHub repo | `[ASSUMED]` | Remote `origin/main` exists; verify repo visibility is Public and commit/clean dirty working tree before submitting. |
 | Open-source `LICENSE` | **Done** | MIT License at `LICENSE` `[CODE]`. |
 | `README.md` with setup | **Done** | Comprehensive setup, env table, demo reset, and architecture `[CODE]`. |
-| List of AI models & tools used | **Partial** | Listed in `README.md` Section 10, but `GEMINI_MODEL` mismatch (`gemini-2.5-flash` vs `gemini-3.1-flash-lite` in code) should be aligned. |
+| List of AI models & tools used | **Done** | Listed in `README.md` Section 10 (`gemini-2.5-flash` and `gpt-4o`). |
 | PayPal & AI meaningfully integrated | **Done** | Real Gemini/OpenAI tool-calling + Vision OCR and real PayPal Orders v2 create/get/capture. |
 | Test instructions with sandbox info | **Done** | Documented in `README.md` and `DEPLOY.md` (add explicit note on using a PayPal Sandbox Buyer account). |
 | Demo video under 3 minutes | **Missing** | Needs to be recorded after verifying live flow. |
