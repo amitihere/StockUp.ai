@@ -40,7 +40,7 @@ function toGeminiType(t: string): string {
   }
 }
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
 
 export class GeminiProvider implements AIAgentProvider {
   readonly name = 'gemini'

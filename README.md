@@ -85,7 +85,7 @@ cp .env.example .env
 | `CHANNEL3_API_KEY` | **Yes** | API key for live supplier search from [trychannel3.com](https://trychannel3.com) |
 | `AI_PROVIDER` | **Yes** | AI provider to use: `"gemini"` (default) or `"openai"` |
 | `GEMINI_API_KEY` | **Yes** | Google Gemini API key from [aistudio.google.com](https://aistudio.google.com/) |
-| `GEMINI_MODEL` | No | Model name (default: `"gemini-2.5-flash"`) |
+| `GEMINI_MODEL` | No | Model name (default: `"gemini-3.8-flash"`) |
 | `OPENAI_API_KEY` | Optional | Required if `AI_PROVIDER="openai"` |
 | `PAYPAL_CLIENT_ID` | **Yes** | PayPal Sandbox Client ID from [developer.paypal.com](https://developer.paypal.com/) |
 | `PAYPAL_CLIENT_SECRET` | **Yes** | PayPal Sandbox Client Secret (server-side only) |
@@ -168,7 +168,7 @@ StockPilot is production-ready for deployment on Render using the included `rend
 ## 10. AI Models & Tools Used
 
 - **Google Gemini**:
-  - `gemini-2.5-flash` for high-throughput autonomous procurement loops.
+  - `gemini-3.8-flash` for high-throughput autonomous procurement loops.
   - Multimodal Vision API (`@google/genai`) for physical receipt OCR and structured JSON extraction.
 - **OpenAI Adapter** (`gpt-4o`): Fallback provider for receipt vision extraction and function calling.
 - **Channel3 API**: Live sourcing across real retail catalogs with price and rating normalization.
