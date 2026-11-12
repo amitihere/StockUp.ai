@@ -320,7 +320,6 @@ export const AGENT_TOOLS: AIToolDefinition[] = [
               reasoning: { type: 'string', description: 'Restock justification' },
               retailer: { type: 'string', description: 'Supplier/retailer name' },
             },
-            required: ['productId', 'quantity'],
           },
         },
         notes: { type: 'string', description: 'Executive summary for the store owner' },
