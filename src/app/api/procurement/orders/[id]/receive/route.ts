@@ -35,23 +35,20 @@ export async function POST(
       )
     }
 
-    // Check if already received
-    const existingMovement = await prisma.stockMovement.findFirst({
-      where: {
-        referenceId: order.id,
-        source: 'order',
-      },
-    })
+    // Execute inventory restock inside atomic transaction with concurrent restock protection
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Concurrency guard: check if already received inside the transaction
+      const existingMovement = await tx.stockMovement.findFirst({
+        where: {
+          referenceId: order.id,
+          source: 'order',
+        },
+      })
 
-    if (existingMovement) {
-      return NextResponse.json(
-        { error: 'This purchase order has already been received into inventory.' },
-        { status: 400 }
-      )
-    }
+      if (existingMovement) {
+        return { alreadyReceived: true }
+      }
 
-    // Execute inventory restock inside transaction
-    await prisma.$transaction(async (tx) => {
       for (const item of order.items) {
         // Increment stock
         await tx.product.update({
@@ -87,7 +84,16 @@ export async function POST(
           },
         },
       })
+
+      return { alreadyReceived: false }
     })
+
+    if (result.alreadyReceived) {
+      return NextResponse.json(
+        { error: 'This purchase order has already been received into inventory.' },
+        { status: 400 }
+      )
+    }
 
     return NextResponse.json({
       data: {

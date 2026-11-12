@@ -148,8 +148,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 4. Create unique idempotency key
-    const idempotencyKey = `create_${order.id}_${Date.now()}`
+    // 4. Stable idempotency key derived from purchase order ID
+    const idempotencyKey = `${order.id}:create`
 
     // 5. Call PayPal Orders API (v2/checkout/orders) using server-side credentials
     const paypalOrder = await createPayPalOrder({

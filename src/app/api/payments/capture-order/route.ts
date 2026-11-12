@@ -143,8 +143,8 @@ export async function POST(request: NextRequest) {
         purchase_units: paypalOrder.purchase_units,
       }
     } else {
-      // Execute capture via PayPal API
-      const captureIdempotencyKey = `cap_${order.id}_${Date.now()}`
+      // Execute capture via PayPal API with stable idempotency key
+      const captureIdempotencyKey = `${order.id}:capture`
       captureResponse = await capturePayPalOrder(paypalOrderId, captureIdempotencyKey)
     }
 
@@ -192,7 +192,7 @@ export async function POST(request: NextRequest) {
               status: 'COMPLETED',
               amount: order.totalAmount,
               currency: order.currency,
-              idempotencyKey: `pay_${order.id}_${Date.now()}`,
+              idempotencyKey: `${order.id}:capture`,
               rawResponse: captureResponse as any,
             },
           })
